@@ -59,6 +59,7 @@ public partial class ShellWindowModel
     private bool canStopReplay;
     private bool isHandlingLicenseLoss;
     private bool isLicenseDialogOpen;
+    private bool isLicenseDialogDeferred;
     private DispatcherTimer? runtimeTimeLimitTimer;
     private bool isUpdatingReplayPositionFromDriver;
     private bool isUpdatingReplayPositionTextFromPosition;
@@ -707,6 +708,28 @@ public partial class ShellWindowModel
 
     private void OpenLicenseDialog()
     {
+        // A heartbeat refusal (e.g. LicenseRevoked) can arrive before the shell window is
+        // shown; RadWindow.Owner requires a shown window ("Cannot set Owner property to a
+        // Window that has not been shown previously", seen 2026-09-12). Defer until loaded.
+        if (Application.Current.MainWindow is not { IsLoaded: true } mainWindow)
+        {
+            if (isLicenseDialogDeferred)
+            {
+                return;
+            }
+
+            isLicenseDialogDeferred = true;
+            Application.Current.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
+            {
+                isLicenseDialogDeferred = false;
+                if (!isLicenseDialogOpen)
+                {
+                    OpenLicenseDialog();
+                }
+            });
+            return;
+        }
+
         var licenseViewModel = new LicenseViewModel(licenseService, logger,
             () => CommunicatedSignals.Count(realProjectData?.Module));
         var licenseView = new LicenseView
@@ -716,7 +739,7 @@ public partial class ShellWindowModel
 
         var licenseDialog = new RadWindow
         {
-            Owner = Application.Current.MainWindow,
+            Owner = mainWindow,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Header = "QInsight License",
             ResizeMode = ResizeMode.NoResize,
