@@ -28,6 +28,13 @@ public sealed class XcpMaster(ILogger? logger = null)
     private volatile TaskCompletionSource<byte[]>? pendingResponse;
     private int pendingEventGeneration;
 
+    // Commands whose wait was cancelled (Stop, transport lost) after the packet had left: the slave
+    // still answers them. XCP carries no command id, so matching relies on order — the transport
+    // delivers that late RES/ERR before the response to any command sent afterwards (DISCONNECT).
+    // Each such response is consumed silently here instead of being reported as unsolicited or,
+    // worse, taken for the answer to the next command. Reset on CONNECT (fresh session).
+    private int lateResponsesExpected;
+
     /// <summary>Sends one XCP packet to the slave; injected by the hosting protocol while its
     /// transport is usable, null otherwise.</summary>
     public Func<byte[], CancellationToken, Task>? Transmitter { get; set; }
@@ -72,7 +79,12 @@ public sealed class XcpMaster(ILogger? logger = null)
         {
             case XcpPacketKind.Response:
             case XcpPacketKind.Error:
-                if (pendingResponse?.TrySetResult(packet) != true)
+                if (Volatile.Read(ref lateResponsesExpected) > 0)
+                {
+                    Interlocked.Decrement(ref lateResponsesExpected);
+                    logger?.Log(LogLevel.Debug, $"XCP: late {XcpPacket.Classify(packet[0])} to a cancelled command consumed (PID 0x{packet[0]:X2}).");
+                }
+                else if (pendingResponse?.TrySetResult(packet) != true)
                 {
                     logger?.Log(LogLevel.Warn, $"XCP: unsolicited {XcpPacket.Classify(packet[0])} packet (PID 0x{packet[0]:X2}) ignored.");
                 }
@@ -154,6 +166,8 @@ public sealed class XcpMaster(ILogger? logger = null)
     {
         return ExecuteTransactionAsync(async token =>
         {
+            // A fresh session: nothing from the previous one can still be in flight.
+            Interlocked.Exchange(ref lateResponsesExpected, 0);
             var connectPacket = await ExecuteCommandAsync(XcpCodec.BuildConnect(), "CONNECT", token);
             var connect = XcpCodec.ParseConnectResponse(connectPacket);
             Codec.IsBigEndian = connect.IsBigEndian;
@@ -533,12 +547,14 @@ public sealed class XcpMaster(ILogger? logger = null)
 
         var responseSource = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         pendingResponse = responseSource;
+        var sent = false;
         try
         {
             await transmitLock.WaitAsync(ct);
             try
             {
                 await transmitter(command, ct);
+                sent = true;
             }
             finally
             {
@@ -574,6 +590,14 @@ public sealed class XcpMaster(ILogger? logger = null)
         finally
         {
             pendingResponse = null;
+            // Cancelled after the packet left and before the slave answered: the answer is still
+            // on its way (TrySetCanceled fails once a response has already been delivered). A
+            // timeout is deliberately NOT counted — the slave may never answer and SYNCH recovery
+            // must see the next packet.
+            if (sent && ct.IsCancellationRequested && responseSource.TrySetCanceled())
+            {
+                Interlocked.Increment(ref lateResponsesExpected);
+            }
         }
     }
 

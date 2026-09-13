@@ -1,3 +1,4 @@
+using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.Protocols.XcpCore;
 using static Qenex.QSuite.Tests.XcpProtocolTest.Program;
 
@@ -24,6 +25,8 @@ internal static class MasterTests
         UnsolicitedAndDaqPackets_AreIgnored().GetAwaiter().GetResult();
         ConcurrentReads_AreSerialized().GetAwaiter().GetResult();
         Cancellation_ReleasesTheEngine().GetAwaiter().GetResult();
+        LateResponse_AfterCancelledCommand_IsConsumedInOrder().GetAwaiter().GetResult();
+        Timeout_DoesNotArmLateResponseConsumption().GetAwaiter().GetResult();
     }
 
     #region Harness
@@ -33,12 +36,13 @@ internal static class MasterTests
     private sealed class FakeSlave
     {
         public readonly List<byte[]> Sent = [];
-        public readonly XcpMaster Master = new();
+        public readonly XcpMaster Master;
         public Func<byte[], byte[]?>? Responder;
         public int ResponseDelayMs;
 
-        public FakeSlave(int timeoutMs = 100)
+        public FakeSlave(int timeoutMs = 100, CapturingLogger? logger = null)
         {
+            Master = new XcpMaster(logger);
             Master.TimeoutMs = timeoutMs;
             Master.Transmitter = (packet, ct) =>
             {
@@ -441,5 +445,60 @@ internal static class MasterTests
         slave.Responder = FakeSlave.DefaultResponder;
         var data = await slave.Master.ReadMemoryAsync(0, 0x1000, 1);
         Check(data.Length == 1, "cancellation: engine usable after cancellation");
+    }
+
+    /// <summary>Stop scenario: a read is cancelled while its response is still on the way, then
+    /// DISCONNECT follows immediately. The late read response must be consumed silently (order
+    /// on the wire), the DISCONNECT response must complete DISCONNECT, and the next CONNECT
+    /// starts clean.</summary>
+    private static async Task LateResponse_AfterCancelledCommand_IsConsumedInOrder()
+    {
+        var log = new CapturingLogger();
+        var slave = await new FakeSlave(timeoutMs: 5000, logger: log).ConnectedAsync();
+        slave.ResponseDelayMs = 150; // every response is late; delivery order = transmission order
+
+        using var cts = new CancellationTokenSource(30);
+        try
+        {
+            await slave.Master.ReadMemoryAsync(0, 0x1000, 1, cts.Token);
+            Check(false, "late response: read should have been cancelled");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        await slave.Master.DisconnectAsync();
+        Check(!slave.Master.IsConnected, "late response: DISCONNECT completed with its own response");
+        Check(log.Has(LogLevel.Debug, "late Response to a cancelled command consumed"), "late response: consumed at Debug level");
+        Check(!log.Has(LogLevel.Warn, "unsolicited"), "late response: no unsolicited-packet warning");
+
+        // A fresh session must not inherit anything.
+        slave.ResponseDelayMs = 0;
+        await slave.Master.ConnectAsync();
+        var data = await slave.Master.ReadMemoryAsync(0, 0x1000, 1);
+        Check(data.Length == 1, "late response: next session reads normally");
+    }
+
+    /// <summary>A timeout (slave silent) must not arm the late-response consumption: the following
+    /// SYNCH/retry must see the slave's next packet as usual.</summary>
+    private static async Task Timeout_DoesNotArmLateResponseConsumption()
+    {
+        var log = new CapturingLogger();
+        var slave = await new FakeSlave(timeoutMs: 50, logger: log).ConnectedAsync();
+        var swallowedOnce = false;
+        slave.Responder = cmd =>
+        {
+            if (cmd[0] == XcpCommand.ShortUpload && !swallowedOnce)
+            {
+                swallowedOnce = true;
+                return null; // provoke exactly one timeout
+            }
+
+            return FakeSlave.DefaultResponder(cmd);
+        };
+
+        var data = await slave.Master.ReadMemoryAsync(0, 0x1000, 1);
+        Check(data.Length == 1, "timeout: retry after SYNCH succeeded");
+        Check(!log.Has(LogLevel.Debug, "late Response to a cancelled command consumed"), "timeout: nothing consumed as a late response");
     }
 }
