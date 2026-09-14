@@ -211,6 +211,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "_LicenseGuard", "_LicenseGu
 		_LicenseGuard\LicenseSealTemplate.cs = _LicenseGuard\LicenseSealTemplate.cs
 	EndProjectSection
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ReconnectPolicyTest", "_Tests\ReconnectPolicyTest\ReconnectPolicyTest.csproj", "{73667039-C71E-4326-BE40-1C7B35D8FF7C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -1085,6 +1087,18 @@ Global
 		{7E6E4622-1424-4601-A182-E616B0C08AAA}.Release|x64.Build.0 = Release|Any CPU
 		{7E6E4622-1424-4601-A182-E616B0C08AAA}.Release|x86.ActiveCfg = Release|Any CPU
 		{7E6E4622-1424-4601-A182-E616B0C08AAA}.Release|x86.Build.0 = Release|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Debug|x64.Build.0 = Debug|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Debug|x86.Build.0 = Debug|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Release|x64.ActiveCfg = Release|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Release|x64.Build.0 = Release|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Release|x86.ActiveCfg = Release|Any CPU
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -1171,6 +1185,7 @@ Global
 		{01BC0598-5DD9-480C-9EE2-8736A475E80F} = {BF8D97A9-2A29-4AA7-A1CE-4BE13DA0B234}
 		{D7270CC4-BAE8-4C28-8EA7-751F36A5A7CD} = {96190788-7C2A-4B67-90FA-516D7D9946CF}
 		{7E6E4622-1424-4601-A182-E616B0C08AAA} = {E888A0C6-1063-4A46-89B5-2A8E8873A52D}
+		{73667039-C71E-4326-BE40-1C7B35D8FF7C} = {96190788-7C2A-4B67-90FA-516D7D9946CF}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {30000164-E084-4EF1-818A-1B98829BA5EA}
