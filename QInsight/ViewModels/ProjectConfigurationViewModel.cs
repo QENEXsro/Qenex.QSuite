@@ -241,7 +241,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
 
     public ObservableCollection<ProjectConfigurationProtocolOption> SourceOptions { get; }
     public ObservableCollection<ProjectConfigurationScriptWrapper> Scripts { get; }
-    public IEnumerable<EnumMemberViewModel> ExecutionModes { get; } = EnumDataSource.FromType<ScriptExecutionMode>();
+    public IEnumerable<EnumMemberViewModel> ExecutionModes { get; } = ScriptExecutionModeSource.Visible;
     public RelayCommand<object> ApplyCommand { get; }
     public RelayCommand<object> CancelCommand { get; }
     public RelayCommand<object> AddDriverCommand { get; }
