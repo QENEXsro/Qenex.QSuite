@@ -15,7 +15,7 @@ public class ScriptPropertiesViewModel : PropertyChangedBaseWithValidation, IPro
 	{
 		ScriptWrapper = scriptWrapper;
 	}
-	public IEnumerable<EnumMemberViewModel> ExecutionModes { get; }	= EnumDataSource.FromType<ScriptExecutionMode>();
+	public IEnumerable<EnumMemberViewModel> ExecutionModes { get; }	= ScriptExecutionModeSource.Visible;
 
 	public ScriptWrapper ScriptWrapper { get; set; }
 
