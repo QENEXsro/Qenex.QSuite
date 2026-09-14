@@ -59,6 +59,9 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
     /// <summary>Response timeout per command, from the parsed session settings.</summary>
     protected abstract int SessionTimeoutMs { get; }
 
+    /// <summary>Command repetitions after a timeout, from the parsed session settings.</summary>
+    protected abstract int SessionRequestRetries { get; }
+
     /// <summary>DAQ time axis source per the daqTimestamps setting: true = ECU timestamps
     /// (default; the SET_DAQ_LIST_MODE timestamp bit is set), false = PC receive time (the bit
     /// stays clear, so a QFW SDK slave sends no timestamps at all; a legacy TIMESTAMP_FIXED
@@ -352,6 +355,7 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
         var session = new XcpMaster(Logger)
         {
             TimeoutMs = SessionTimeoutMs,
+            MaxRetries = SessionRequestRetries,
             Transmitter = CreatePacketTransmitter(frameTransmitter)
         };
         master = session;

@@ -7,7 +7,7 @@ namespace Qenex.QSuite.Protocols.XcpTcpProtocol;
 
 /// <summary>
 /// XCP on TCP session configuration parsed from the protocol's RawSettings, e.g.
-/// requestTimeoutMs="1000";daqTimestamps="slave". Host and port belong to the TCP Client driver, and
+/// requestTimeoutMs="1000";requestRetries="2";daqTimestamps="slave". Host and port belong to the TCP Client driver, and
 /// byte order comes from the slave's CONNECT response. Empty settings are valid (all defaults).
 /// </summary>
 public sealed class XcpTcpSessionSettings
@@ -15,10 +15,13 @@ public sealed class XcpTcpSessionSettings
     /// <summary>Response timeout per command (EV_CMD_PENDING restarts it).</summary>
     public int TimeoutMs { get; init; } = 1000;
 
+    /// <summary>Command repetitions after a timeout, on top of the first attempt.</summary>
+    public int RequestRetries { get; init; } = XcpSettingsParsing.DefaultRequestRetries;
+
     /// <summary>DAQ time axis source: true = ECU timestamps (default), false = PC receive time.</summary>
     public bool UseSlaveDaqTimestamps { get; init; } = true;
 
-    private static readonly string[] KnownSettings = ["requestTimeoutMs", "daqTimestamps"];
+    private static readonly string[] KnownSettings = ["requestTimeoutMs", "requestRetries", "daqTimestamps"];
 
     public static XcpTcpSessionSettings Parse(string rawSettings, ILogger? logger = null)
     {
@@ -27,6 +30,7 @@ public sealed class XcpTcpSessionSettings
         return new XcpTcpSessionSettings
         {
             TimeoutMs = ParseTimeout(settings),
+            RequestRetries = XcpSettingsParsing.ParseRequestRetries(settings),
             UseSlaveDaqTimestamps = XcpSettingsParsing.ParseUseSlaveDaqTimestamps(settings)
         };
     }

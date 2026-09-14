@@ -263,6 +263,10 @@ internal static class TcpIntegrationTests
             "tcp settings: non-positive timeout is rejected");
 
         Check(XcpTcpSessionSettings.Parse("requestTimeoutMs=\"250\"").TimeoutMs == 250, "tcp settings: requestTimeoutMs parsed");
+        Check(XcpTcpSessionSettings.Parse(string.Empty).RequestRetries == 2, "tcp settings: requestRetries defaults to 2");
+        Check(XcpTcpSessionSettings.Parse("requestRetries=\"0\"").RequestRetries == 0, "tcp settings: requestRetries 0 accepted");
+        CheckThrows<ArgumentException>(() => XcpTcpSessionSettings.Parse("requestRetries=\"-1\""), "tcp settings: negative requestRetries rejected");
+        Check(XcpSessionSettings.Parse("masterId=0x200;slaveId=0x201;requestRetries=\"5\"").RequestRetries == 5, "can settings: requestRetries parsed");
         Check(XcpTcpSessionSettings.Parse("timeoutMs=\"300\"").TimeoutMs == 1000, "tcp settings: former timeoutMs is not read any more");
         Check(XcpSessionSettings.Parse("masterId=0x200;slaveId=0x201;timeoutMs=\"400\"").TimeoutMs == 1000,
             "can settings: former timeoutMs is not read any more");
