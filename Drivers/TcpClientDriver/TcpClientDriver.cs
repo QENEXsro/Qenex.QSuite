@@ -15,16 +15,17 @@ namespace Qenex.QSuite.Drivers.TcpClientDriver;
 /// Received chunks are pushed to every ProtocolBase&lt;byte[]&gt; protocol, transmitting protocols
 /// get their TX path via ITransportProtocol&lt;byte[]&gt;, and operator writes are delegated to
 /// IProtocolVariableWriteProtocol implementations (same pattern as the CAN and serial drivers).
-/// Reconnects on failure; numberOfReconnections="0" retries forever.
+/// Reconnects after a failure according to the shared <see cref="ReconnectPolicy"/>
+/// (reconnectDelayMs / reconnectAttempts, -1 = forever), the same way as the serial driver.
 /// </summary>
 public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITransportSource<byte[]>
 {
     private string host = "127.0.0.1";
     private int port = 5000;
     private int connectionTimeoutMs = 5000;
-    private int reconnectTimeMs = 1000;
-    private int numberOfReconnections = 3;
-    private int idleTimeoutMs; // 0 = wait for data forever (request/response protocols like Modbus)
+    private const int DefaultReconnectDelayMs = 1000;
+    private ReconnectPolicy reconnect = new(DefaultReconnectDelayMs);
+    private int keepAliveMs = TcpKeepAlive.DefaultMs; // 0 = no keepalive probes (see TcpKeepAlive)
 
     private TcpClient? tcpClient;
     private NetworkStream? stream;
@@ -47,29 +48,34 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
         };
     }
 
-    // idleTimeoutMs defaults to 5000 (streaming/JSON sources: a silent server means a dead link,
-    // so reconnect); set it to 0 for request/response protocols such as Modbus TCP, where a quiet
-    // line is normal.
+    // A quiet line is never treated as a fault here (request/response protocols such as Modbus
+    // TCP are silent between polls); a dead peer is detected by the TCP keepalive probes.
     public override string DefaultRawSettings =>
-        "ip=127.0.0.1;port=5000;connectionTimeoutMs=5000;reconnectTimeMs=1000;numberOfReconnections=3;idleTimeoutMs=5000";
+        "ip=127.0.0.1;port=5000;connectionTimeoutMs=5000;"
+        + ReconnectPolicy.SettingsTemplate(DefaultReconnectDelayMs)
+        + ";" + TcpKeepAlive.SettingsTemplate();
 
     private static readonly string[] KnownSettings =
-        ["ip", "port", "connectionTimeoutMs", "reconnectTimeMs", "numberOfReconnections", "idleTimeoutMs"];
+    [
+        "ip", "port", "connectionTimeoutMs",
+        ReconnectPolicy.ReconnectDelayKey, ReconnectPolicy.ReconnectAttemptsKey,
+        TcpKeepAlive.Key
+    ];
 
-    // Settings example: ip="127.0.0.1";port="5000";connectionTimeoutMs="5000";reconnectTimeMs="1000";
-    //                   numberOfReconnections="3" (0 = reconnect forever);idleTimeoutMs="5000"
-    // idleTimeoutMs > 0 reconnects when the server stays silent that long — dead-link detection for
-    // streaming protocols (JSON signals). Leave 0 for request/response protocols (Modbus TCP),
-    // where a quiet line is normal.
+    // Settings example: ip="127.0.0.1";port="5000";connectionTimeoutMs="5000";reconnectDelayMs="1000";
+    //                   reconnectAttempts="-1";keepAliveMs="5000"
+    // keepAliveMs: TCP keepalive probes after that much silence (dead cable / vanished server is
+    // detected within a few seconds instead of the OS retransmission timeout); 0 = off.
+    // reconnectAttempts: -1 = reconnect forever (default), 0 = stop at the first failure,
+    // N = give up after N consecutive failed attempts (see ReconnectPolicy).
     public override void SetConfiguration()
     {
         var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "TCP client driver");
         host = GetString(settings, "ip", host);
         port = GetInt(settings, "port", port);
         connectionTimeoutMs = Math.Max(1, GetInt(settings, "connectionTimeoutMs", connectionTimeoutMs));
-        reconnectTimeMs = Math.Max(1, GetInt(settings, "reconnectTimeMs", reconnectTimeMs));
-        numberOfReconnections = Math.Max(0, GetInt(settings, "numberOfReconnections", numberOfReconnections));
-        idleTimeoutMs = Math.Max(0, GetInt(settings, "idleTimeoutMs", idleTimeoutMs));
+        reconnect = ReconnectPolicy.Parse(settings, DefaultReconnectDelayMs, Logger, "TCP client driver");
+        keepAliveMs = TcpKeepAlive.Parse(settings, Logger, "TCP client driver");
     }
 
     #region Driver control
@@ -153,7 +159,7 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
     private async Task RunLoopAsync(CancellationToken ct)
     {
         var protocolsStarted = false;
-        var reconnectAttempt = 0;
+        string? stopMessage = null;
         try
         {
             while (!ct.IsCancellationRequested && !exitRequested)
@@ -161,7 +167,7 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
                 try
                 {
                     await ConnectAsync(ct);
-                    reconnectAttempt = 0;
+                    reconnect.ResetAfterSuccess();
                     SetTransmitters(SendChunkAsync);
                     NotifyProtocolsTransportConnectionChanged(true);
 
@@ -189,19 +195,18 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
                         break;
                     }
 
-                    reconnectAttempt++;
-                    Logger?.Log(LogLevel.Warn,
-                        $"TCP client '{Label}' connection to {host}:{port} failed ({reconnectAttempt}{(numberOfReconnections > 0 ? $"/{numberOfReconnections}" : "")}): {e.Message}");
-                    SetState(CommunicationState.Faulted, $"{host}:{port}: {e.Message}");
-
-                    if (numberOfReconnections > 0 && reconnectAttempt >= numberOfReconnections)
+                    if (!reconnect.RegisterFailure())
                     {
-                        Logger?.Log(LogLevel.Error,
-                            $"TCP client '{Label}' reached the maximum reconnection count ({numberOfReconnections}) and stopped.");
+                        stopMessage = reconnect.GiveUpMessage(e.Message);
+                        Logger?.Log(LogLevel.Error, $"TCP client '{Label}' ({host}:{port}) {stopMessage}");
                         break;
                     }
 
-                    await Task.Delay(reconnectTimeMs, ct);
+                    Logger?.Log(reconnect.FailureLogLevel(),
+                        $"TCP client '{Label}' ({host}:{port}) failed ({reconnect.AttemptText}): {e.Message} "
+                        + $"Reconnecting in {reconnect.ReconnectDelayMs} ms.");
+                    SetState(CommunicationState.Faulted, $"{host}:{port}: {e.Message}");
+                    await Task.Delay(reconnect.ReconnectDelayMs, ct);
                 }
                 finally
                 {
@@ -223,7 +228,8 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
                 SetTransmitters(null);
             }
 
-            SetState(CommunicationState.Stopped);
+            // A give-up keeps its reason visible in the driver state (and in the log as Error).
+            SetState(CommunicationState.Stopped, stopMessage);
             exitRequested = false;
         }
     }
@@ -234,6 +240,7 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
         try
         {
             await client.ConnectAsync(host, port, ct).AsTask().WaitAsync(TimeSpan.FromMilliseconds(connectionTimeoutMs), ct);
+            TcpKeepAlive.Apply(client.Client, keepAliveMs);
             tcpClient = client;
             stream = client.GetStream();
             Logger?.Log(LogLevel.Info, $"TCP client '{Label}' connected to {host}:{port}.");
@@ -252,10 +259,7 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
 
         while (!ct.IsCancellationRequested && !exitRequested)
         {
-            var read = currentStream.ReadAsync(buffer, ct);
-            var bytesRead = idleTimeoutMs > 0
-                ? await read.AsTask().WaitAsync(TimeSpan.FromMilliseconds(idleTimeoutMs), ct)
-                : await read;
+            var bytesRead = await currentStream.ReadAsync(buffer, ct);
             if (bytesRead == 0)
             {
                 throw new IOException("The server closed the connection.");

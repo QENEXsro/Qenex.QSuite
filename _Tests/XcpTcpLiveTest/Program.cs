@@ -72,8 +72,7 @@ internal static class Program
             Label = "XCPlite",
             IsEnabled = true,
             Logger = logger,
-            // idleTimeoutMs=0: request/response protocol, a quiet line is normal.
-            RawSettings = $"ip={ip};port={port};connectionTimeoutMs=3000;reconnectTimeMs=1000;numberOfReconnections=2;idleTimeoutMs=0"
+            RawSettings = $"ip={ip};port={port};connectionTimeoutMs=3000;reconnectDelayMs=1000;reconnectAttempts=2;keepAliveMs=5000"
         };
         driver.SetConfiguration();
 

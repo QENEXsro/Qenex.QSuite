@@ -50,7 +50,7 @@ internal static class DriverLoopbackTests
         var client = new TcpClientDriver
         {
             IsEnabled = true,
-            RawSettings = $"host=\"127.0.0.1\";port=\"{TestPort}\";reconnectTimeMs=\"200\";numberOfReconnections=\"0\""
+            RawSettings = $"host=\"127.0.0.1\";port=\"{TestPort}\";reconnectDelayMs=\"200\";reconnectAttempts=\"-1\""
         };
         client.SetConfiguration();
         client.AddProtocol(masterProtocol);

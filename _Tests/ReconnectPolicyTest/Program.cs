@@ -21,6 +21,7 @@ internal static class Program
         SuccessResetsTheRun();
         LoggingFiniteEveryAttemptEndlessThrottled();
         SettingsParserReportsUnknownKeys();
+        KeepAliveParseAndApply();
 
         Console.WriteLine(failures == 0 ? "ALL TESTS PASSED" : $"{failures} TEST(S) FAILED");
         return failures == 0 ? 0 : 1;
@@ -152,6 +153,25 @@ internal static class Program
         var clean = new CapturingLogger();
         SettingsParser.Parse("port=COM1;baudRate=9600", ["port", "baudRate"], clean, "Serial port driver");
         Check(clean.Messages.Count == 0, "parser: no warning when every key is known");
+    }
+
+    private static void KeepAliveParseAndApply()
+    {
+        var logger = new CapturingLogger();
+        Check(TcpKeepAlive.Parse(new Dictionary<string, string>(), logger, "test") == TcpKeepAlive.DefaultMs, "keepalive: default 5000");
+        Check(TcpKeepAlive.Parse(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["keepAliveMs"] = "0" }, logger, "test") == 0, "keepalive: 0 = off");
+        Check(TcpKeepAlive.Parse(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["keepAliveMs"] = "x" }, logger, "test") == TcpKeepAlive.DefaultMs
+              && logger.Messages.Count == 1, "keepalive: invalid value warns and falls back");
+        Check(TcpKeepAlive.SettingsTemplate() == "keepAliveMs=5000", "keepalive: template text");
+
+        using var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        TcpKeepAlive.Apply(socket, 5000);
+        var on = (int)socket.GetSocketOption(System.Net.Sockets.SocketOptionLevel.Socket, System.Net.Sockets.SocketOptionName.KeepAlive)! != 0;
+        var time = (int)socket.GetSocketOption(System.Net.Sockets.SocketOptionLevel.Tcp, System.Net.Sockets.SocketOptionName.TcpKeepAliveTime)!;
+        Check(on && time == 5, "keepalive: applied to the socket (on, 5 s idle)");
+        TcpKeepAlive.Apply(socket, 0);
+        var off = (int)socket.GetSocketOption(System.Net.Sockets.SocketOptionLevel.Socket, System.Net.Sockets.SocketOptionName.KeepAlive)! == 0;
+        Check(off, "keepalive: 0 switches the socket option off");
     }
 
     private static void Check(bool condition, string description)
