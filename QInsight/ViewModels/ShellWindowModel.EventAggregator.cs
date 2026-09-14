@@ -158,7 +158,7 @@ public partial class ShellWindowModel
             }
             case DriverSeWrapper driverSeWrapper:
             {
-                propVm.SelectedViewModel = new DriverPropertiesViewModel(eventAggregator, driverSeWrapper.Driver);
+                propVm.SelectedViewModel = new DriverPropertiesViewModel(eventAggregator, driverSeWrapper.Driver, () => IsRuntimeStarted);
                 break;
             }
             case ProtocolSeWrapper protocolSeWrapper:
