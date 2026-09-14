@@ -7,7 +7,7 @@ namespace Qenex.QSuite.Protocols.XcpProtocol;
 
 /// <summary>
 /// XCP session configuration parsed from the protocol's RawSettings, e.g.
-/// masterId="0x200";slaveId="0x201";extendedIds="false";requestTimeoutMs="1000";daqTimestamps="slave".
+/// masterId="0x200";slaveId="0x201";extendedIds="false";requestTimeoutMs="1000";requestRetries="2";daqTimestamps="slave".
 /// Both CAN identifiers are entered in hexadecimal (0x prefix optional), matching the repo
 /// convention for CAN ids. Byte order and address granularity are NOT configured — they come
 /// from the slave's CONNECT response.
@@ -26,10 +26,13 @@ public sealed class XcpSessionSettings
     /// <summary>Response timeout per command (EV_CMD_PENDING restarts it).</summary>
     public int TimeoutMs { get; init; } = 1000;
 
+    /// <summary>Command repetitions after a timeout, on top of the first attempt.</summary>
+    public int RequestRetries { get; init; } = XcpSettingsParsing.DefaultRequestRetries;
+
     /// <summary>DAQ time axis source: true = ECU timestamps (default), false = PC receive time.</summary>
     public bool UseSlaveDaqTimestamps { get; init; } = true;
 
-    private static readonly string[] KnownSettings = ["masterId", "slaveId", "extendedIds", "requestTimeoutMs", "daqTimestamps"];
+    private static readonly string[] KnownSettings = ["masterId", "slaveId", "extendedIds", "requestTimeoutMs", "requestRetries", "daqTimestamps"];
 
     public static XcpSessionSettings Parse(string rawSettings, ILogger? logger = null)
     {
@@ -58,6 +61,7 @@ public sealed class XcpSessionSettings
             SlaveId = slaveId,
             IsExtendedId = isExtended,
             TimeoutMs = timeoutMs,
+            RequestRetries = XcpSettingsParsing.ParseRequestRetries(settings),
             UseSlaveDaqTimestamps = XcpSettingsParsing.ParseUseSlaveDaqTimestamps(settings)
         };
     }

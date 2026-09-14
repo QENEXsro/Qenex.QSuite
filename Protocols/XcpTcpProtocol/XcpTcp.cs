@@ -35,7 +35,7 @@ public class XcpTcp : XcpProtocolBase<byte[]>
         };
     }
 
-    public override string DefaultRawSettings => "requestTimeoutMs=1000;daqTimestamps=slave";
+    public override string DefaultRawSettings => "requestTimeoutMs=1000;requestRetries=2;daqTimestamps=slave";
 
     // Type-compatibility alone would offer every byte[] driver (serial included); XCP on Ethernet
     // is only meaningful on the TCP client (the ECU acts as server).
@@ -47,6 +47,7 @@ public class XcpTcp : XcpProtocolBase<byte[]>
     }
 
     protected override int SessionTimeoutMs => settings.TimeoutMs;
+    protected override int SessionRequestRetries => settings.RequestRetries;
 
     protected override bool UseSlaveDaqTimestamps => settings.UseSlaveDaqTimestamps;
 
