@@ -1,11 +1,13 @@
 using System.Globalization;
+using Qenex.QSuite.LogSystems.LogSystem;
+using Qenex.QSuite.Protocols.Protocol;
 using Qenex.QSuite.Protocols.XcpCore;
 
 namespace Qenex.QSuite.Protocols.XcpProtocol;
 
 /// <summary>
 /// XCP session configuration parsed from the protocol's RawSettings, e.g.
-/// masterId="0x200";slaveId="0x201";extendedIds="false";timeoutMs="1000";daqTimestamps="slave".
+/// masterId="0x200";slaveId="0x201";extendedIds="false";requestTimeoutMs="1000";daqTimestamps="slave".
 /// Both CAN identifiers are entered in hexadecimal (0x prefix optional), matching the repo
 /// convention for CAN ids. Byte order and address granularity are NOT configured — they come
 /// from the slave's CONNECT response.
@@ -27,13 +29,11 @@ public sealed class XcpSessionSettings
     /// <summary>DAQ time axis source: true = ECU timestamps (default), false = PC receive time.</summary>
     public bool UseSlaveDaqTimestamps { get; init; } = true;
 
-    public static XcpSessionSettings Parse(string rawSettings)
+    private static readonly string[] KnownSettings = ["masterId", "slaveId", "extendedIds", "requestTimeoutMs", "daqTimestamps"];
+
+    public static XcpSessionSettings Parse(string rawSettings, ILogger? logger = null)
     {
-        var settings = rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0], parts => parts[1].Trim('"'), StringComparer.OrdinalIgnoreCase);
+        var settings = SettingsParser.Parse(rawSettings, KnownSettings, logger, "XCP on CAN protocol");
 
         var masterId = ParseCanId(settings, "masterId");
         var slaveId = ParseCanId(settings, "slaveId");
@@ -94,13 +94,13 @@ public sealed class XcpSessionSettings
 
     private static int ParseTimeout(IReadOnlyDictionary<string, string> settings)
     {
-        if (!settings.TryGetValue("timeoutMs", out var value))
+        if (!settings.TryGetValue("requestTimeoutMs", out var value))
         {
             return 1000;
         }
 
         return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var timeout) && timeout > 0
             ? timeout
-            : throw new ArgumentException($"Invalid setting timeoutMs='{value}' (expected a positive integer).");
+            : throw new ArgumentException($"Invalid setting requestTimeoutMs='{value}' (expected a positive integer).");
     }
 }

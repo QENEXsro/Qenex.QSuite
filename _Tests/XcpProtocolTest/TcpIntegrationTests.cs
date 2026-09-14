@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using Qenex.QSuite.Common.CoreComm;
 using Qenex.QSuite.Protocols.XcpCore;
+using Qenex.QSuite.Protocols.XcpProtocol;
 using Qenex.QSuite.Protocols.XcpTcpProtocol;
 using Qenex.QSuite.Variables.QVariables;
 using Qenex.QSuite.Variables.QVariables.Values;
@@ -135,7 +136,7 @@ internal static class TcpIntegrationTests
         var protocol = new XcpTcp
         {
             IsEnabled = true,
-            RawSettings = "timeoutMs=\"100\""
+            RawSettings = "requestTimeoutMs=\"100\""
         };
         protocol.SetConfiguration();
 
@@ -258,8 +259,13 @@ internal static class TcpIntegrationTests
         var empty = XcpTcpSessionSettings.Parse(string.Empty);
         Check(empty.TimeoutMs == 1000, "tcp settings: empty settings are valid (host/port belong to the driver)");
 
-        CheckThrows<ArgumentException>(() => XcpTcpSessionSettings.Parse("timeoutMs=\"0\""),
+        CheckThrows<ArgumentException>(() => XcpTcpSessionSettings.Parse("requestTimeoutMs=\"0\""),
             "tcp settings: non-positive timeout is rejected");
+
+        Check(XcpTcpSessionSettings.Parse("requestTimeoutMs=\"250\"").TimeoutMs == 250, "tcp settings: requestTimeoutMs parsed");
+        Check(XcpTcpSessionSettings.Parse("timeoutMs=\"300\"").TimeoutMs == 1000, "tcp settings: former timeoutMs is not read any more");
+        Check(XcpSessionSettings.Parse("masterId=0x200;slaveId=0x201;timeoutMs=\"400\"").TimeoutMs == 1000,
+            "can settings: former timeoutMs is not read any more");
     }
 
     private static void CompatibleDrivers_NarrowToTcpClient()

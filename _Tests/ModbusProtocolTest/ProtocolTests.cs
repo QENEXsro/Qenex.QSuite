@@ -14,6 +14,7 @@ internal static class ProtocolTests
 {
     internal static void Run()
     {
+        MasterSettings_NewAndLegacyNames();
         Master_PollsHoldingFloat_Tcp().GetAwaiter().GetResult();
         Master_PollsCoil_Rtu().GetAwaiter().GetResult();
         Master_OperatorWrite_WithEchoSuppression().GetAwaiter().GetResult();
@@ -47,7 +48,7 @@ internal static class ProtocolTests
         var protocol = new ModbusMasterProtocol
         {
             IsEnabled = true,
-            RawSettings = $"mode=\"{mode}\";unitId=\"1\";timeoutMs=\"100\";retries=\"1\""
+            RawSettings = $"mode=\"{mode}\";unitId=\"1\";requestTimeoutMs=\"100\";requestRetries=\"1\""
         };
         protocol.SetConfiguration();
         var protocolVariable = protocol.CreateProtocolVariable(variable, [Poll20Ms], commParams, true);
@@ -338,5 +339,16 @@ internal static class ProtocolTests
               reparsed.Direction == spec.Direction &&
               ReferenceEquals(reparsed.VariableEvent, Poll20Ms),
             "commParams round-trip preserves the full mapping");
+    }
+    private static void MasterSettings_NewAndLegacyNames()
+    {
+        var current = ModbusMasterSettings.Parse("mode=rtu;unitId=1;requestTimeoutMs=250;requestRetries=4");
+        Check(current.TimeoutMs == 250 && current.Retries == 4, "master settings: requestTimeoutMs / requestRetries parsed");
+
+        var former = ModbusMasterSettings.Parse("mode=rtu;unitId=1;timeoutMs=300;retries=5");
+        Check(former.TimeoutMs == 1000 && former.Retries == 2, "master settings: former timeoutMs / retries are not read any more");
+
+        var defaults = ModbusMasterSettings.Parse(new ModbusMasterProtocol().DefaultRawSettings);
+        Check(defaults.TimeoutMs == 1000 && defaults.Retries == 2, "master settings: default raw settings parse");
     }
 }

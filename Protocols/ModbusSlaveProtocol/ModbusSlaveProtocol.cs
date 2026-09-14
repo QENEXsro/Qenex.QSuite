@@ -58,7 +58,7 @@ public class ModbusSlaveProtocol : ProtocolBase<byte[]>, ITransportProtocol<byte
     {
         try
         {
-            settings = ModbusSlaveSettings.Parse(RawSettings);
+            settings = ModbusSlaveSettings.Parse(RawSettings, Logger);
             configurationError = null;
         }
         catch (ArgumentException e)

@@ -6,8 +6,8 @@ namespace Qenex.QSuite.Drivers.Driver;
 /// Shared reconnect behaviour of the transport drivers (serial, TCP client, TCP server, CAN), so
 /// every driver reads the same two settings and reacts the same way to a lost link:
 /// <list type="bullet">
-/// <item><c>reconnectTimeMs</c> — pause between two connection attempts.</item>
-/// <item><c>numberOfReconnections</c> — how many times to retry after a failed attempt:
+/// <item><c>reconnectDelayMs</c> — pause between two connection attempts.</item>
+/// <item><c>reconnectAttempts</c> — how many times to retry after a failed attempt:
 /// <c>-1</c> (default) retries forever, <c>0</c> never retries (the driver stops at the first
 /// failure), <c>N</c> gives up after N consecutive failed retries.</item>
 /// </list>
@@ -19,8 +19,8 @@ namespace Qenex.QSuite.Drivers.Driver;
 /// </summary>
 public sealed class ReconnectPolicy
 {
-    public const string ReconnectTimeKey = "reconnectTimeMs";
-    public const string NumberOfReconnectionsKey = "numberOfReconnections";
+    public const string ReconnectDelayKey = "reconnectDelayMs";
+    public const string ReconnectAttemptsKey = "reconnectAttempts";
 
     public const int RetryForever = -1;
     public const int NoRetry = 0;
@@ -30,43 +30,42 @@ public sealed class ReconnectPolicy
 
     private long lastWarnedAtMs = long.MinValue;
 
-    public ReconnectPolicy(int reconnectTimeMs, int numberOfReconnections = RetryForever)
+    public ReconnectPolicy(int reconnectDelayMs, int reconnectAttempts = RetryForever)
     {
-        ReconnectTimeMs = Math.Max(1, reconnectTimeMs);
-        NumberOfReconnections = Math.Max(RetryForever, numberOfReconnections);
+        ReconnectDelayMs = Math.Max(1, reconnectDelayMs);
+        ReconnectAttempts = Math.Max(RetryForever, reconnectAttempts);
     }
 
     /// <summary>Pause between two connection attempts.</summary>
-    public int ReconnectTimeMs { get; }
+    public int ReconnectDelayMs { get; }
 
     /// <summary>-1 = forever, 0 = never, N = that many consecutive retries.</summary>
-    public int NumberOfReconnections { get; }
+    public int ReconnectAttempts { get; }
 
-    public bool RetriesForever => NumberOfReconnections == RetryForever;
+    public bool RetriesForever => ReconnectAttempts == RetryForever;
 
     /// <summary>Consecutive failed attempts since the last successful connection.</summary>
     public int ConsecutiveFailures { get; private set; }
 
     /// <summary>Text for the default settings template of a driver.</summary>
-    public static string SettingsTemplate(int reconnectTimeMs, int numberOfReconnections = RetryForever)
-        => $"{ReconnectTimeKey}={reconnectTimeMs};{NumberOfReconnectionsKey}={numberOfReconnections}";
+    public static string SettingsTemplate(int reconnectDelayMs, int reconnectAttempts = RetryForever)
+        => $"{ReconnectDelayKey}={reconnectDelayMs};{ReconnectAttemptsKey}={reconnectAttempts}";
 
     /// <summary>
-    /// Reads the two settings from a parsed key=value dictionary. Legacy aliases of the TCP client
-    /// driver (<c>reconnectTime</c>, <c>reconnections</c>) are still accepted. An unparsable
-    /// value is reported and the default used, so the driver never runs with a value the
-    /// operator did not choose.
+    /// Reads the two settings from a parsed key=value dictionary. An unparsable value is
+    /// reported and the default used, so the driver never runs with a value the operator did
+    /// not choose.
     /// </summary>
     public static ReconnectPolicy Parse(
         IReadOnlyDictionary<string, string> settings,
-        int defaultReconnectTimeMs,
+        int defaultReconnectDelayMs,
         ILogger? logger,
         string driverName,
-        int defaultNumberOfReconnections = RetryForever)
+        int defaultReconnectAttempts = RetryForever)
     {
-        var reconnectTimeMs = GetInt(settings, ReconnectTimeKey, "reconnectTime", defaultReconnectTimeMs, logger, driverName);
-        var numberOfReconnections = GetInt(settings, NumberOfReconnectionsKey, "reconnections", defaultNumberOfReconnections, logger, driverName);
-        return new ReconnectPolicy(reconnectTimeMs, numberOfReconnections);
+        var reconnectDelayMs = GetInt(settings, ReconnectDelayKey, defaultReconnectDelayMs, logger, driverName);
+        var reconnectAttempts = GetInt(settings, ReconnectAttemptsKey, defaultReconnectAttempts, logger, driverName);
+        return new ReconnectPolicy(reconnectDelayMs, reconnectAttempts);
     }
 
     /// <summary>Call after a successful connection: the failure run starts over.</summary>
@@ -83,7 +82,7 @@ public sealed class ReconnectPolicy
     public bool RegisterFailure()
     {
         ConsecutiveFailures++;
-        return RetriesForever || ConsecutiveFailures <= NumberOfReconnections;
+        return RetriesForever || ConsecutiveFailures <= ReconnectAttempts;
     }
 
     /// <summary>
@@ -111,23 +110,22 @@ public sealed class ReconnectPolicy
     /// <summary>"attempt 3" (forever) or "attempt 3/5" (limited), for log messages.</summary>
     public string AttemptText => RetriesForever
         ? $"attempt {ConsecutiveFailures}"
-        : $"attempt {ConsecutiveFailures}/{NumberOfReconnections + 1}";
+        : $"attempt {ConsecutiveFailures}/{ReconnectAttempts + 1}";
 
     /// <summary>Message logged (Error) and set as state message when the driver gives up.</summary>
     public string GiveUpMessage(string lastError)
-        => NumberOfReconnections == NoRetry
-            ? $"stopped at the first failure (numberOfReconnections=0): {lastError}"
-            : $"gave up after {NumberOfReconnections} reconnection attempt(s): {lastError}";
+        => ReconnectAttempts == NoRetry
+            ? $"stopped at the first failure ({ReconnectAttemptsKey}=0): {lastError}"
+            : $"gave up after {ReconnectAttempts} reconnect attempt(s): {lastError}";
 
     private static int GetInt(
         IReadOnlyDictionary<string, string> settings,
         string key,
-        string legacyKey,
         int defaultValue,
         ILogger? logger,
         string driverName)
     {
-        if (!settings.TryGetValue(key, out var value) && !settings.TryGetValue(legacyKey, out value))
+        if (!settings.TryGetValue(key, out var value))
         {
             return defaultValue;
         }

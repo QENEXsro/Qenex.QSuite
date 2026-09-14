@@ -81,7 +81,7 @@ internal static class Program
         {
             IsEnabled = true,
             Logger = logger,
-            RawSettings = $"timeoutMs=1000;daqTimestamps={timestampMode}"
+            RawSettings = $"requestTimeoutMs=1000;daqTimestamps={timestampMode}"
         };
         protocol.SetConfiguration();
         protocol.StateChanged += (_, e) => Console.WriteLine($"[state] protocol: {e.CurrentState} {e.Message}");

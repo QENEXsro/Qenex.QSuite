@@ -1,11 +1,13 @@
 using System.Globalization;
+using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.Protocols.Modbus;
+using Qenex.QSuite.Protocols.Protocol;
 
 namespace Qenex.QSuite.Protocols.ModbusMaster;
 
 /// <summary>
 /// Modbus master session configuration parsed from the protocol's RawSettings, e.g.
-/// mode="rtu";unitId="1";timeoutMs="1000";retries="2". The mode selects the framing —
+/// mode="rtu";unitId="1";requestTimeoutMs="1000";requestRetries="2". The mode selects the framing —
 /// "rtu" for serial lines (CRC16), "tcp" for Modbus TCP (MBAP header) — matching the
 /// driver the protocol is hosted on.
 /// </summary>
@@ -21,20 +23,18 @@ public sealed class ModbusMasterSettings
         return IsTcp ? new ModbusTcpFramer() : new ModbusRtuFramer(ModbusFramerRole.Master);
     }
 
-    public static ModbusMasterSettings Parse(string rawSettings)
+    private static readonly string[] KnownSettings = ["mode", "unitId", "requestTimeoutMs", "requestRetries"];
+
+    public static ModbusMasterSettings Parse(string rawSettings, ILogger? logger = null)
     {
-        var settings = rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0], parts => parts[1].Trim('"'), StringComparer.OrdinalIgnoreCase);
+        var settings = SettingsParser.Parse(rawSettings, KnownSettings, logger, "Modbus master protocol");
 
         return new ModbusMasterSettings
         {
             IsTcp = ParseMode(settings),
             UnitId = ParseByte(settings, "unitId", 1),
-            TimeoutMs = ParsePositiveInt(settings, "timeoutMs", 1000),
-            Retries = ParseNonNegativeInt(settings, "retries", 2)
+            TimeoutMs = ParsePositiveInt(settings, "requestTimeoutMs", 1000),
+            Retries = ParseNonNegativeInt(settings, "requestRetries", 2)
         };
     }
 

@@ -41,7 +41,7 @@ internal static class LoopbackTests
         var master = new ModbusMasterProtocol
         {
             IsEnabled = true,
-            RawSettings = $"mode=\"{mode}\";unitId=\"1\";timeoutMs=\"200\";retries=\"1\""
+            RawSettings = $"mode=\"{mode}\";unitId=\"1\";requestTimeoutMs=\"200\";requestRetries=\"1\""
         };
         master.SetConfiguration();
         master.AddVariable(master.CreateProtocolVariable(masterFloat, [Poll20Ms],

@@ -58,7 +58,7 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
 
     // mode is mandatory: "rtu" for serial lines (CRC16), "tcp" for Modbus TCP (MBAP header),
     // matching the driver the protocol is hosted on.
-    public override string DefaultRawSettings => "mode=rtu;unitId=1;timeoutMs=1000;retries=2";
+    public override string DefaultRawSettings => "mode=rtu;unitId=1;requestTimeoutMs=1000;requestRetries=2";
 
     // Every supported commParam listed explicitly so the user only edits values instead of
     // discovering keys; address is mandatory with no sensible default, 0 is a placeholder to
@@ -78,7 +78,7 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
     {
         try
         {
-            settings = ModbusMasterSettings.Parse(RawSettings);
+            settings = ModbusMasterSettings.Parse(RawSettings, Logger);
             configurationError = null;
         }
         catch (ArgumentException e)
