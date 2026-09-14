@@ -1659,6 +1659,11 @@
                         Command="{Binding ApplyCommand}"/>
                     <telerik:RadButton
                         MinWidth="82"
+                        Margin="0,0,8,0"
+                        Content="OK"
+                        Command="{Binding OkCommand}"/>
+                    <telerik:RadButton
+                        MinWidth="82"
                         Content="Cancel"
                         Command="{Binding CancelCommand}"/>
                 </StackPanel>
