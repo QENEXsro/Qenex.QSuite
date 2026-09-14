@@ -81,7 +81,7 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .Prepend(string.Empty);
 
-    public string DisplayName => $"{Variable.Label} ({Variable.Id})";
+    public string DisplayName => VariableTypeDisplay.ListName(Variable, Variable.Label, Variable.Id);
     public string SourceText => $"{SelectedSource.DriverLabel} / {SelectedSource.ProtocolLabel}";
 
     public ProjectConfigurationProtocolOption SelectedSource

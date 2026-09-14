@@ -578,6 +578,7 @@
                                                 <q:QTextBox
                                                     x:Name="ValueTextBox"
                                                     Text="{Binding ValueText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                    IsReadOnly="{Binding IsReadOnly}"
                                                     ToolTip="{Binding Error}"/>
                                                 <!-- Free-form values (e.g. bit mask 0x0F / 15) are committed and
                                                      validated only when the field loses focus. -->
