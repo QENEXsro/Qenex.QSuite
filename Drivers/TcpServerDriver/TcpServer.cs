@@ -20,6 +20,9 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
 {
     private string bindAddress = "0.0.0.0";
     private int port = 502;
+    private const int DefaultReconnectDelayMs = 1000;
+    private ReconnectPolicy reconnect = new(DefaultReconnectDelayMs);
+    private int keepAliveMs = TcpKeepAlive.DefaultMs; // 0 = no keepalive probes on the accepted connection
 
     private TcpListener? listener;
     private TcpClient? currentClient;
@@ -43,16 +46,30 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
         };
     }
 
-    public override string DefaultRawSettings => "bindAddress=0.0.0.0;port=502";
+    public override string DefaultRawSettings =>
+        "bindAddress=0.0.0.0;port=502;"
+        + ReconnectPolicy.SettingsTemplate(DefaultReconnectDelayMs)
+        + ";" + TcpKeepAlive.SettingsTemplate();
 
-    private static readonly string[] KnownSettings = ["bindAddress", "port"];
+    private static readonly string[] KnownSettings =
+    [
+        "bindAddress", "port",
+        ReconnectPolicy.ReconnectDelayKey, ReconnectPolicy.ReconnectAttemptsKey,
+        TcpKeepAlive.Key
+    ];
 
-    // Settings example: bindAddress="0.0.0.0";port="502"
+    // Settings example: bindAddress="0.0.0.0";port="502";reconnectDelayMs="1000";reconnectAttempts="-1";keepAliveMs="5000"
+    // reconnectDelayMs / reconnectAttempts apply to opening the listening port (port already in use,
+    // a specific bindAddress not available yet): -1 = retry forever (default), 0 = stop at the first
+    // failure, N = give up after N failed retries (see ReconnectPolicy).
+    // keepAliveMs: TCP keepalive probes on the accepted connection (see TcpKeepAlive); 0 = off.
     public override void SetConfiguration()
     {
         var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "TCP server driver");
         bindAddress = GetString(settings, "bindAddress", bindAddress);
         port = GetInt(settings, "port", port);
+        reconnect = ReconnectPolicy.Parse(settings, DefaultReconnectDelayMs, Logger, "TCP server driver");
+        keepAliveMs = TcpKeepAlive.Parse(settings, Logger, "TCP server driver");
     }
 
     #region Driver control
@@ -127,10 +144,15 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
 
     private async Task RunLoopAsync(CancellationToken ct)
     {
+        string? stopMessage = null;
         try
         {
-            listener = new TcpListener(IPAddress.Parse(bindAddress), port);
-            listener.Start();
+            stopMessage = await StartListenerAsync(ct);
+            if (stopMessage != null)
+            {
+                return;
+            }
+
             Logger?.Log(LogLevel.Info, $"TCP server driver '{Label}' listening on {bindAddress}:{port}.");
 
             SetTransmitters(SendChunkAsync);
@@ -157,6 +179,7 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
                 CloseClient();
                 currentClient = client;
                 currentClient.NoDelay = true;
+                TcpKeepAlive.Apply(client.Client, keepAliveMs);
                 currentStream = client.GetStream();
                 var endpoint = client.Client.RemoteEndPoint?.ToString() ?? "unknown";
                 Logger?.Log(LogLevel.Info, $"TCP server driver '{Label}': client {endpoint} connected.");
@@ -166,6 +189,8 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
                 try
                 {
                     await ReadLoopAsync(currentStream, ct);
+                    Logger?.Log(LogLevel.Info, $"TCP server driver '{Label}': client {endpoint} disconnected.");
+                    SetState(CommunicationState.Running, $"Listening on {bindAddress}:{port}.");
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested || exitRequested)
                 {
@@ -173,7 +198,9 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
                 }
                 catch (Exception e) when (e is SocketException or IOException or ObjectDisposedException)
                 {
-                    Logger?.Log(LogLevel.Info, $"TCP server driver '{Label}': client {endpoint} disconnected ({e.Message}).");
+                    // The connection broke without the client closing it (keepalive probes unanswered,
+                    // connection reset): report it and go back to listening for the next client.
+                    Logger?.Log(LogLevel.Warn, $"TCP server driver '{Label}': client {endpoint} lost ({e.Message}).");
                     SetState(CommunicationState.Running, $"Listening on {bindAddress}:{port}.");
                 }
                 finally
@@ -204,12 +231,53 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
             listener?.Stop();
             listener = null;
 
-            if (State != CommunicationState.Faulted)
+            if (stopMessage != null)
+            {
+                // Gave up opening the port: the reason stays visible in the driver state.
+                SetState(CommunicationState.Stopped, stopMessage);
+            }
+            else if (State != CommunicationState.Faulted)
             {
                 SetState(CommunicationState.Stopped);
             }
 
             exitRequested = false;
+        }
+    }
+
+    /// <summary>
+    /// Opens the listening port, retrying according to the reconnect policy (port in use, bind
+    /// address not available). Returns null on success, or the give-up message (already logged as
+    /// Error) when the policy is exhausted.
+    /// </summary>
+    private async Task<string?> StartListenerAsync(CancellationToken ct)
+    {
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                listener = new TcpListener(IPAddress.Parse(bindAddress), port);
+                listener.Start();
+                reconnect.ResetAfterSuccess();
+                return null;
+            }
+            catch (Exception e) when (e is SocketException or FormatException)
+            {
+                listener = null;
+                if (!reconnect.RegisterFailure())
+                {
+                    var giveUp = reconnect.GiveUpMessage(e.Message);
+                    Logger?.Log(LogLevel.Error, $"TCP server driver '{Label}' ({bindAddress}:{port}) {giveUp}");
+                    return giveUp;
+                }
+
+                Logger?.Log(reconnect.FailureLogLevel(),
+                    $"TCP server driver '{Label}' ({bindAddress}:{port}) failed ({reconnect.AttemptText}): {e.Message} "
+                    + $"Retrying in {reconnect.ReconnectDelayMs} ms.");
+                SetState(CommunicationState.Faulted, $"{bindAddress}:{port}: {e.Message}");
+                await Task.Delay(reconnect.ReconnectDelayMs, ct);
+            }
         }
     }
 
