@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:q="clr-namespace:Qenex.QSuite.Controls.OverridenWinControls;assembly=Qenex.QSuite.Controls.OverridenWinControls"
+             xmlns:telerik="http://schemas.telerik.com/2008/xaml/presentation"
              xmlns:vm="clr-namespace:Qenex.QInsight.ViewModels"
              mc:Ignorable="d"
              d:DesignHeight="300" d:DesignWidth="300"
@@ -16,6 +17,7 @@
         </Grid.ColumnDefinitions>
 
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -51,5 +53,11 @@
         <q:QTextBlock Grid.Row="9" Grid.Column="1" Margin="0,0,0,5" Text="{Binding StateMessage}" TextWrapping="Wrap" />
         <q:QTextBlock Grid.Row="10" Grid.Column="0" Margin="0,0,10,0" Text="Protocols" FontWeight="SemiBold" />
         <q:QTextBlock Grid.Row="10" Grid.Column="1" Text="{Binding ProtocolCount}" TextWrapping="Wrap" />
+
+        <!-- Restarts a driver that stopped (gave up reconnecting, failed to start) while the runtime
+             keeps running on the other drivers. Enabled only in that situation. -->
+        <telerik:RadButton Grid.Row="11" Grid.Column="1" Margin="0,8,0,0" MinWidth="80" HorizontalAlignment="Left"
+                           Content="Start" Command="{Binding StartCommand}"
+                           ToolTip="Start this driver and its protocols again while the runtime is running (enabled when the driver is stopped or faulted)." />
     </Grid>
 </UserControl>

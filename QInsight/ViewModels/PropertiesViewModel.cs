@@ -8,7 +8,12 @@ public class PropertiesViewModel(EventAggregator ea) : ViewModelBase(ea)
     {
         get;
         set
-        { field = value; OnPropertyChanged(); }
+        {
+            // A panel view model may subscribe to its model (driver state changes); let it go.
+            (field as IDisposable)?.Dispose();
+            field = value;
+            OnPropertyChanged();
+        }
     }
 
     #region ViewModelBase implementation

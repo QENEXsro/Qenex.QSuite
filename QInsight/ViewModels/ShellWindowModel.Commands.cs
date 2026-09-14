@@ -2610,6 +2610,8 @@ public partial class ShellWindowModel
             workspaceViewModel.SetControlsRunState(runtimeStarted);
         }
 
+        (propertiesViewModel?.SelectedViewModel as DriverPropertiesViewModel)?.RefreshDriver();
+
         foreach (var scriptViewModel in ViewModels.OfType<ScriptViewModel>())
         {
             scriptViewModel.IsRuntimeRunning = runtimeStarted;
