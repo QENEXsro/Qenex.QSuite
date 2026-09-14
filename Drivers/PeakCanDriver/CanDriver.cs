@@ -58,9 +58,11 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
     // operator must replace with the actual device id. bitrate is in bit/s (see Bitrates map).
     public override string DefaultRawSettings => "deviceId=0x51;bitrate=250000";
 
+    private static readonly string[] KnownSettings = ["deviceId", "bitrate"];
+
     public override void SetConfiguration()
     {
-        var settings = ParseSettings(RawSettings);
+        var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "PeakCAN driver");
         deviceId = GetHexId(settings, "deviceId", deviceId);
         bitrate = GetUInt(settings, "bitrate", bitrate);
 
@@ -481,15 +483,6 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
         PCANBasic.PCAN_USBBUS9, PCANBasic.PCAN_USBBUS10, PCANBasic.PCAN_USBBUS11, PCANBasic.PCAN_USBBUS12,
         PCANBasic.PCAN_USBBUS13, PCANBasic.PCAN_USBBUS14, PCANBasic.PCAN_USBBUS15, PCANBasic.PCAN_USBBUS16,
     };
-
-    private static Dictionary<string, string> ParseSettings(string rawSettings)
-    {
-        return rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0], parts => parts[1].Trim('"'), StringComparer.OrdinalIgnoreCase);
-    }
 
     private uint GetUInt(IReadOnlyDictionary<string, string> settings, string key, uint defaultValue)
     {

@@ -45,11 +45,13 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
 
     public override string DefaultRawSettings => "bindAddress=0.0.0.0;port=502";
 
+    private static readonly string[] KnownSettings = ["bindAddress", "port"];
+
     // Settings example: bindAddress="0.0.0.0";port="502"
     public override void SetConfiguration()
     {
-        var settings = ParseSettings(RawSettings);
-        bindAddress = GetString(settings, "bindAddress", GetString(settings, "ip", bindAddress));
+        var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "TCP server driver");
+        bindAddress = GetString(settings, "bindAddress", bindAddress);
         port = GetInt(settings, "port", port);
     }
 
@@ -290,15 +292,6 @@ public class TcpServer : DriverBase, ITransportSource<byte[]>
     #endregion
 
     #region Configuration helpers
-
-    private static Dictionary<string, string> ParseSettings(string rawSettings)
-    {
-        return rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0], parts => parts[1].Trim('"'), StringComparer.OrdinalIgnoreCase);
-    }
 
     private static string GetString(IReadOnlyDictionary<string, string> settings, string key, string defaultValue)
     {

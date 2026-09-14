@@ -178,7 +178,7 @@ internal static class TcpDaqIntegrationTests
     }
 
     private static (XcpTcp Protocol, SimulatedDaqSlave Slave, ScalarVariable DaqVariable, ScalarVariable PolledVariable)
-        CreateRunningSetup(string rawSettings = "timeoutMs=\"100\"", ILogger? logger = null)
+        CreateRunningSetup(string rawSettings = "requestTimeoutMs=\"100\"", ILogger? logger = null)
     {
         var protocol = new XcpTcp
         {
@@ -278,7 +278,7 @@ internal static class TcpDaqIntegrationTests
     /// clear, the slave sends no timestamp and ODT 0 is pure data (full capacity).</summary>
     private static async Task QfwShape_MasterTimestamps_NoTimestampOnTheWire()
     {
-        var (protocol, slave, daqVariable, _) = CreateRunningSetup("timeoutMs=\"100\";daqTimestamps=\"master\"");
+        var (protocol, slave, daqVariable, _) = CreateRunningSetup("requestTimeoutMs=\"100\";daqTimestamps=\"master\"");
         slave.TimestampMode = TimestampModeByListBit;
 
         await protocol.StartAsync();
@@ -321,7 +321,7 @@ internal static class TcpDaqIntegrationTests
     /// timestamp when decoding (compatibility path, e.g. XCPlite).</summary>
     private static async Task FixedSlave_MasterTimestamps_BitStaysSetTimestampIgnored()
     {
-        var (protocol, slave, daqVariable, _) = CreateRunningSetup("timeoutMs=\"100\";daqTimestamps=\"master\"");
+        var (protocol, slave, daqVariable, _) = CreateRunningSetup("requestTimeoutMs=\"100\";daqTimestamps=\"master\"");
         slave.TimestampMode = TimestampModeFixed;
 
         await protocol.StartAsync();
@@ -372,7 +372,7 @@ internal static class TcpDaqIntegrationTests
     private static async Task NoResolutionInfo_MasterMode_NoteOnly()
     {
         var logger = new CapturingLogger();
-        var (protocol, slave, daqVariable, _) = CreateRunningSetup("timeoutMs=\"100\";daqTimestamps=\"master\"", logger);
+        var (protocol, slave, daqVariable, _) = CreateRunningSetup("requestTimeoutMs=\"100\";daqTimestamps=\"master\"", logger);
         slave.ResolutionInfoSupported = false;
 
         await protocol.StartAsync();

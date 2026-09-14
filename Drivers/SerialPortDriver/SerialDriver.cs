@@ -15,7 +15,7 @@ namespace Qenex.QSuite.Drivers.SerialPortDriver;
 /// via ITransportProtocol&lt;byte[]&gt;, and operator writes are delegated to
 /// IProtocolVariableWriteProtocol implementations (same pattern as the CAN driver).
 /// One driver instance = one COM port. Reopens the port automatically after failures (USB unplug)
-/// according to the shared <see cref="ReconnectPolicy"/> (reconnectTimeMs / numberOfReconnections).
+/// according to the shared <see cref="ReconnectPolicy"/> (reconnectDelayMs / reconnectAttempts).
 /// </summary>
 public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITransportSource<byte[]>
 {
@@ -25,8 +25,8 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
     private Parity parity = Parity.None;
     private StopBits stopBits = StopBits.One;
     private Handshake handshake = Handshake.None;
-    private const int DefaultReconnectTimeMs = 2000;
-    private ReconnectPolicy reconnect = new(DefaultReconnectTimeMs);
+    private const int DefaultReconnectDelayMs = 2000;
+    private ReconnectPolicy reconnect = new(DefaultReconnectDelayMs);
 
     private SerialPort? serialPort;
     private readonly SemaphoreSlim writeLock = new(1, 1);
@@ -50,20 +50,26 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
 
     public override string DefaultRawSettings =>
         "port=COM1;baudRate=9600;dataBits=8;parity=none;stopBits=1;handshake=none;"
-        + ReconnectPolicy.SettingsTemplate(DefaultReconnectTimeMs);
+        + ReconnectPolicy.SettingsTemplate(DefaultReconnectDelayMs);
+
+    private static readonly string[] KnownSettings =
+    [
+        "port", "baudRate", "dataBits", "parity", "stopBits", "handshake",
+        ReconnectPolicy.ReconnectDelayKey, ReconnectPolicy.ReconnectAttemptsKey
+    ];
 
     // Settings example: port="COM3";baudRate="19200";dataBits="8";parity="even";stopBits="1";
-    //                   handshake="none";reconnectTimeMs="2000";numberOfReconnections="-1"
-    // numberOfReconnections: -1 = reopen forever (default), 0 = stop at the first failure,
+    //                   handshake="none";reconnectDelayMs="2000";reconnectAttempts="-1"
+    // reconnectAttempts: -1 = reopen forever (default), 0 = stop at the first failure,
     // N = give up after N consecutive failed reopen attempts (see ReconnectPolicy).
     public override void SetConfiguration()
     {
-        var settings = ParseSettings(RawSettings);
+        var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "Serial port driver");
 
-        portName = GetString(settings, "port", GetString(settings, "portName", portName));
+        portName = GetString(settings, "port", portName);
         baudRate = GetInt(settings, "baudRate", baudRate);
         dataBits = GetInt(settings, "dataBits", dataBits);
-        reconnect = ReconnectPolicy.Parse(settings, DefaultReconnectTimeMs, Logger, "Serial port driver");
+        reconnect = ReconnectPolicy.Parse(settings, DefaultReconnectDelayMs, Logger, "Serial port driver");
 
         parity = GetString(settings, "parity", "none").ToLowerInvariant() switch
         {
@@ -231,9 +237,9 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
 
                     Logger?.Log(reconnect.FailureLogLevel(),
                         $"Serial port driver '{Label}' ({portName}) failed ({reconnect.AttemptText}): {e.Message} "
-                        + $"Reopening in {reconnect.ReconnectTimeMs} ms.");
+                        + $"Reopening in {reconnect.ReconnectDelayMs} ms.");
                     SetState(CommunicationState.Faulted, $"{portName}: {e.Message}");
-                    await Task.Delay(reconnect.ReconnectTimeMs, ct);
+                    await Task.Delay(reconnect.ReconnectDelayMs, ct);
                 }
                 finally
                 {
@@ -412,15 +418,6 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
     #endregion
 
     #region Configuration helpers
-
-    private static Dictionary<string, string> ParseSettings(string rawSettings)
-    {
-        return rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0], parts => parts[1].Trim('"'), StringComparer.OrdinalIgnoreCase);
-    }
 
     private static string GetString(IReadOnlyDictionary<string, string> settings, string key, string defaultValue)
     {

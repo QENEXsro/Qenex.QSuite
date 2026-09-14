@@ -93,9 +93,11 @@ public class FileDataReplayDriver : DriverBase, IReplayDriver, IDataLogCsvExport
 
     public override string DefaultRawSettings => "file=DataLogs\\values.qilog;mode=realtime;speed=1;loop=false";
 
+    private static readonly string[] KnownSettings = ["file", "directory", "mode", "speed", "loop"];
+
     public override void SetConfiguration()
     {
-        var settings = ParseSettings(RawSettings);
+        var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "Data log replay driver");
         if (settings.TryGetValue("file", out var configuredFile) && !string.IsNullOrWhiteSpace(configuredFile))
         {
             logFilePath = configuredFile;
@@ -1060,18 +1062,6 @@ public class FileDataReplayDriver : DriverBase, IReplayDriver, IDataLogCsvExport
         }
 
         return $"\"{value.Replace("\"", "\"\"")}\"";
-    }
-
-    private static Dictionary<string, string> ParseSettings(string rawSettings)
-    {
-        return rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(
-                parts => parts[0],
-                parts => parts[1].Trim('"'),
-                StringComparer.OrdinalIgnoreCase);
     }
 
     private enum ReplayMode

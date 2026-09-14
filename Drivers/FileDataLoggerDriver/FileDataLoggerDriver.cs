@@ -55,6 +55,8 @@ public class FileDataLoggerDriver : DriverBase, IProtocolVariableSinkDriver, IDa
 
     public override string DefaultRawSettings => "file=DataLogs;append=true;flushOnWrite=false;reorderBufferMs=500";
 
+    private static readonly string[] KnownSettings = ["file", "directory", "append", "flushOnWrite", "reorderBufferMs"];
+
     public override void SetConfiguration()
     {
         logFilePath = Path.Combine(DriverEnvironment.DataRootDirectory, "DataLogs");
@@ -62,7 +64,7 @@ public class FileDataLoggerDriver : DriverBase, IProtocolVariableSinkDriver, IDa
         flushOnWrite = false;
         reorderBufferDelay = DefaultReorderBufferDelay;
 
-        var settings = ParseSettings(RawSettings);
+        var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "Data log recorder driver");
         if (settings.TryGetValue("file", out var configuredFile) && !string.IsNullOrWhiteSpace(configuredFile))
         {
             logFilePath = configuredFile;
@@ -436,18 +438,6 @@ public class FileDataLoggerDriver : DriverBase, IProtocolVariableSinkDriver, IDa
             IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
             _ => value.ToString() ?? string.Empty
         };
-    }
-
-    private static Dictionary<string, string> ParseSettings(string rawSettings)
-    {
-        return rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(
-                parts => parts[0],
-                parts => parts[1].Trim('"'),
-                StringComparer.OrdinalIgnoreCase);
     }
 
     private static string CreateTimestampedLogFilePath(string configuredFilePath, string? dataLogFileName, DateTime timestamp)

@@ -97,7 +97,7 @@ internal static class IntegrationTests
         var protocol = new Xcp
         {
             IsEnabled = true,
-            RawSettings = $"masterId=\"0x{MasterId:X}\";slaveId=\"0x{SlaveId:X}\";timeoutMs=\"100\""
+            RawSettings = $"masterId=\"0x{MasterId:X}\";slaveId=\"0x{SlaveId:X}\";requestTimeoutMs=\"100\""
         };
         protocol.SetConfiguration();
 

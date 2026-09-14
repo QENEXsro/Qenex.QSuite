@@ -30,11 +30,11 @@ public class Xcp : XcpProtocolBase<CanFrame>
 
     // masterId/slaveId are the CAN identifiers (hex, 0x prefix optional) and must differ — the
     // 0x200/0x201 values are placeholders the operator replaces with the slave's actual ids.
-    public override string DefaultRawSettings => "masterId=0x200;slaveId=0x201;extendedIds=false;timeoutMs=1000;daqTimestamps=slave";
+    public override string DefaultRawSettings => "masterId=0x200;slaveId=0x201;extendedIds=false;requestTimeoutMs=1000;daqTimestamps=slave";
 
     protected override void ApplyConfiguration(string rawSettings)
     {
-        settings = XcpSessionSettings.Parse(rawSettings);
+        settings = XcpSessionSettings.Parse(rawSettings, Logger);
     }
 
     protected override int SessionTimeoutMs => settings.TimeoutMs;

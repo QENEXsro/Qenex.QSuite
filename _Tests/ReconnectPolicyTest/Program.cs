@@ -1,5 +1,6 @@
 using Qenex.QSuite.Drivers.Driver;
 using Qenex.QSuite.LogSystems.LogSystem;
+using Qenex.QSuite.Protocols.Protocol;
 
 namespace Qenex.QSuite.Tests.ReconnectPolicyTest;
 
@@ -19,6 +20,7 @@ internal static class Program
         LimitedGivesUpAfterNRetries();
         SuccessResetsTheRun();
         LoggingFiniteEveryAttemptEndlessThrottled();
+        SettingsParserReportsUnknownKeys();
 
         Console.WriteLine(failures == 0 ? "ALL TESTS PASSED" : $"{failures} TEST(S) FAILED");
         return failures == 0 ? 0 : 1;
@@ -27,35 +29,36 @@ internal static class Program
     private static void ParseDefaults()
     {
         var policy = ReconnectPolicy.Parse(new Dictionary<string, string>(), 2000, null, "test");
-        Check(policy.ReconnectTimeMs == 2000, "default reconnect time");
-        Check(policy.NumberOfReconnections == ReconnectPolicy.RetryForever, "default = retry forever");
+        Check(policy.ReconnectDelayMs == 2000, "default reconnect time");
+        Check(policy.ReconnectAttempts == ReconnectPolicy.RetryForever, "default = retry forever");
         Check(policy.RetriesForever, "RetriesForever for default");
-        Check(ReconnectPolicy.SettingsTemplate(2000) == "reconnectTimeMs=2000;numberOfReconnections=-1", "settings template text");
+        Check(ReconnectPolicy.SettingsTemplate(2000) == "reconnectDelayMs=2000;reconnectAttempts=-1", "settings template text");
     }
 
     private static void ParseValuesAndAliases()
     {
         var policy = ReconnectPolicy.Parse(
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["reconnectTimeMs"] = "500", ["numberOfReconnections"] = "4" },
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["reconnectDelayMs"] = "500", ["reconnectAttempts"] = "4" },
             2000, null, "test");
-        Check(policy.ReconnectTimeMs == 500 && policy.NumberOfReconnections == 4, "explicit values parsed");
+        Check(policy.ReconnectDelayMs == 500 && policy.ReconnectAttempts == 4, "explicit values parsed");
 
-        var legacy = ReconnectPolicy.Parse(
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["reconnectTime"] = "300", ["reconnections"] = "2" },
+        var former = ReconnectPolicy.Parse(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["reconnectTimeMs"] = "300", ["numberOfReconnections"] = "2" },
             2000, null, "test");
-        Check(legacy.ReconnectTimeMs == 300 && legacy.NumberOfReconnections == 2, "legacy TCP client aliases accepted");
+        Check(former.ReconnectDelayMs == 2000 && former.ReconnectAttempts == ReconnectPolicy.RetryForever,
+            "former names (reconnectTimeMs / numberOfReconnections) are not read any more");
 
         var clamped = new ReconnectPolicy(0, -5);
-        Check(clamped.ReconnectTimeMs == 1 && clamped.NumberOfReconnections == ReconnectPolicy.RetryForever, "values clamped");
+        Check(clamped.ReconnectDelayMs == 1 && clamped.ReconnectAttempts == ReconnectPolicy.RetryForever, "values clamped");
     }
 
     private static void ParseInvalidValueFallsBack()
     {
         var logger = new CapturingLogger();
         var policy = ReconnectPolicy.Parse(
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["numberOfReconnections"] = "many" },
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["reconnectAttempts"] = "many" },
             2000, logger, "test driver");
-        Check(policy.NumberOfReconnections == ReconnectPolicy.RetryForever, "invalid value falls back to the default");
+        Check(policy.ReconnectAttempts == ReconnectPolicy.RetryForever, "invalid value falls back to the default");
         Check(logger.Messages.Count == 1 && logger.Messages[0].Level == LogLevel.Warn && logger.Messages[0].Text.Contains("'many'"),
             "invalid value is reported as a warning");
     }
@@ -88,7 +91,7 @@ internal static class Program
         Check(policy.RegisterFailure(), "failure 3 allows retry 3");
         Check(!policy.RegisterFailure(), "failure 4 gives up (3 retries used)");
         Check(policy.AttemptText == "attempt 4/4", "attempt text with limit counts the first try");
-        Check(policy.GiveUpMessage("x") == "gave up after 3 reconnection attempt(s): x", "give-up text for N");
+        Check(policy.GiveUpMessage("x") == "gave up after 3 reconnect attempt(s): x", "give-up text for N");
     }
 
     private static void SuccessResetsTheRun()
@@ -128,6 +131,27 @@ internal static class Program
         endless.ResetAfterSuccess();
         endless.RegisterFailure();
         Check(endless.FailureLogLevel() == LogLevel.Warn, "endless: a new run after success warns again");
+    }
+
+    private static void SettingsParserReportsUnknownKeys()
+    {
+        var logger = new CapturingLogger();
+        var settings = SettingsParser.Parse(
+            "port=\"COM6\"; BaudRate = 9600;timeoutMs=2000;retries=10;broken",
+            ["port", "baudRate"], logger, "Serial port driver");
+
+        Check(settings.Count == 4 && settings["port"] == "COM6" && settings["baudrate"] == "9600",
+            "parser: quotes and whitespace stripped, keys case-insensitive, entry without '=' skipped");
+        Check(logger.Messages.Count == 1 && logger.Messages[0].Level == LogLevel.Warn,
+            "parser: one warning for the unknown keys");
+        Check(logger.Messages.Count == 1
+              && logger.Messages[0].Text.Contains("'timeoutMs'") && logger.Messages[0].Text.Contains("'retries'")
+              && !logger.Messages[0].Text.Contains("'port'") && logger.Messages[0].Text.Contains("Known settings: port, baudRate"),
+            "parser: warning names the unknown keys and lists the known ones");
+
+        var clean = new CapturingLogger();
+        SettingsParser.Parse("port=COM1;baudRate=9600", ["port", "baudRate"], clean, "Serial port driver");
+        Check(clean.Messages.Count == 0, "parser: no warning when every key is known");
     }
 
     private static void Check(bool condition, string description)

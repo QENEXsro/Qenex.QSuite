@@ -53,6 +53,9 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
     public override string DefaultRawSettings =>
         "ip=127.0.0.1;port=5000;connectionTimeoutMs=5000;reconnectTimeMs=1000;numberOfReconnections=3;idleTimeoutMs=5000";
 
+    private static readonly string[] KnownSettings =
+        ["ip", "port", "connectionTimeoutMs", "reconnectTimeMs", "numberOfReconnections", "idleTimeoutMs"];
+
     // Settings example: ip="127.0.0.1";port="5000";connectionTimeoutMs="5000";reconnectTimeMs="1000";
     //                   numberOfReconnections="3" (0 = reconnect forever);idleTimeoutMs="5000"
     // idleTimeoutMs > 0 reconnects when the server stays silent that long — dead-link detection for
@@ -60,12 +63,12 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
     // where a quiet line is normal.
     public override void SetConfiguration()
     {
-        var settings = ParseSettings(RawSettings);
-        host = GetString(settings, "ip", GetString(settings, "host", host));
+        var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "TCP client driver");
+        host = GetString(settings, "ip", host);
         port = GetInt(settings, "port", port);
-        connectionTimeoutMs = Math.Max(1, GetInt(settings, "connectionTimeout", GetInt(settings, "connectionTimeoutMs", connectionTimeoutMs)));
-        reconnectTimeMs = Math.Max(1, GetInt(settings, "reconnectTime", GetInt(settings, "reconnectTimeMs", reconnectTimeMs)));
-        numberOfReconnections = Math.Max(0, GetInt(settings, "numberOfReconnections", GetInt(settings, "reconnections", numberOfReconnections)));
+        connectionTimeoutMs = Math.Max(1, GetInt(settings, "connectionTimeoutMs", connectionTimeoutMs));
+        reconnectTimeMs = Math.Max(1, GetInt(settings, "reconnectTimeMs", reconnectTimeMs));
+        numberOfReconnections = Math.Max(0, GetInt(settings, "numberOfReconnections", numberOfReconnections));
         idleTimeoutMs = Math.Max(0, GetInt(settings, "idleTimeoutMs", idleTimeoutMs));
     }
 
@@ -347,15 +350,6 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
     #endregion
 
     #region Configuration helpers
-
-    private static Dictionary<string, string> ParseSettings(string rawSettings)
-    {
-        return rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0], parts => parts[1].Trim('"'), StringComparer.OrdinalIgnoreCase);
-    }
 
     private static string GetString(IReadOnlyDictionary<string, string> settings, string key, string defaultValue)
     {

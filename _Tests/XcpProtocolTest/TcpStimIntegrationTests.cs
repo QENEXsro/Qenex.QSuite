@@ -180,7 +180,7 @@ internal static class TcpStimIntegrationTests
     }
 
     private static (XcpTcp Protocol, SimulatedStimSlave Slave, ScalarVariable StimVariable, ScalarVariable DaqVariable)
-        CreateRunningSetup(string rawSettings = "timeoutMs=\"100\"", ILogger? logger = null)
+        CreateRunningSetup(string rawSettings = "requestTimeoutMs=\"100\"", ILogger? logger = null)
     {
         var protocol = new XcpTcp
         {
@@ -411,7 +411,7 @@ internal static class TcpStimIntegrationTests
     /// header + data.</summary>
     private static async Task QfwShape_MasterTimestamps_NoTimestampsAtAll()
     {
-        var (protocol, slave, stimVariable, daqVariable) = CreateRunningSetup("timeoutMs=\"100\";daqTimestamps=\"master\"");
+        var (protocol, slave, stimVariable, daqVariable) = CreateRunningSetup("requestTimeoutMs=\"100\";daqTimestamps=\"master\"");
         slave.TimestampMode = TimestampModeByListBit;
         stimVariable.SetValue(3.25);
 

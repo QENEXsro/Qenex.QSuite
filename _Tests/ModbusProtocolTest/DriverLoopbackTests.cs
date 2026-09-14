@@ -41,7 +41,7 @@ internal static class DriverLoopbackTests
         var masterProtocol = new ModbusMasterProtocol
         {
             IsEnabled = true,
-            RawSettings = "mode=\"tcp\";unitId=\"1\";timeoutMs=\"500\";retries=\"2\""
+            RawSettings = "mode=\"tcp\";unitId=\"1\";requestTimeoutMs=\"500\";requestRetries=\"2\""
         };
         masterProtocol.SetConfiguration();
         masterProtocol.AddVariable(masterProtocol.CreateProtocolVariable(masterFloat, [Poll20Ms],

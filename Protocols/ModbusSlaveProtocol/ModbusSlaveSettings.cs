@@ -1,5 +1,7 @@
 using System.Globalization;
+using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.Protocols.Modbus;
+using Qenex.QSuite.Protocols.Protocol;
 
 namespace Qenex.QSuite.Protocols.ModbusSlave;
 
@@ -20,13 +22,11 @@ public sealed class ModbusSlaveSettings
         return IsTcp ? new ModbusTcpFramer() : new ModbusRtuFramer(ModbusFramerRole.Slave);
     }
 
-    public static ModbusSlaveSettings Parse(string rawSettings)
+    private static readonly string[] KnownSettings = ["mode", "unitId", "respondToAnyUnit"];
+
+    public static ModbusSlaveSettings Parse(string rawSettings, ILogger? logger = null)
     {
-        var settings = rawSettings
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => item.Split('=', 2, StringSplitOptions.TrimEntries))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0], parts => parts[1].Trim('"'), StringComparer.OrdinalIgnoreCase);
+        var settings = SettingsParser.Parse(rawSettings, KnownSettings, logger, "Modbus slave protocol");
 
         var isTcp = ParseMode(settings);
         return new ModbusSlaveSettings
