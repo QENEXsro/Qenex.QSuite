@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.Specifications.ComponentSpecification;
 using Qenex.QSuite.Variables.QVariables;
@@ -87,8 +86,5 @@ public class ProtocolVariable : IProtocolVariable
         var message =
             $"Value-changed subscriber threw in {source} for variable '{Variable?.Name}' (Id {Variable?.Id}): {e.Message}";
         Logger?.Log(LogLevel.Error, message, e);
-        // TODO(datalog-gap diag): remove after root cause fixed.
-        // Fallback for cases where Logger is not set (visible in a trace listener / debugger).
-        Trace.TraceError($"[ProtocolVariable] {message}{Environment.NewLine}{e}");
     }
 }
