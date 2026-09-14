@@ -28,6 +28,11 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
 
     private ushort channelHandle = PCANBasic.PCAN_NONEBUS;
     private bool isInitialized;
+    private const int DefaultReconnectDelayMs = 1000;
+    private ReconnectPolicy reconnect = new(DefaultReconnectDelayMs);
+    // Without frames the receive event never fires, so the loop wakes up this often to ask the
+    // adapter whether it is still there (a pulled PCAN-USB produces no event at all).
+    private const int HealthCheckMs = 1000;
 
     private AutoResetEvent? receiveEvent;
     private volatile bool exitRequested;
@@ -56,15 +61,22 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
 
     // deviceId is the PCAN_DEVICE_ID set in hardware (hex, 0..FF); 0x51 is only a placeholder the
     // operator must replace with the actual device id. bitrate is in bit/s (see Bitrates map).
-    public override string DefaultRawSettings => "deviceId=0x51;bitrate=250000";
+    public override string DefaultRawSettings =>
+        "deviceId=0x51;bitrate=250000;" + ReconnectPolicy.SettingsTemplate(DefaultReconnectDelayMs);
 
-    private static readonly string[] KnownSettings = ["deviceId", "bitrate"];
+    private static readonly string[] KnownSettings =
+        ["deviceId", "bitrate", ReconnectPolicy.ReconnectDelayKey, ReconnectPolicy.ReconnectAttemptsKey];
+
+    // reconnectAttempts: -1 = reconnect forever (default), 0 = stop at the first failure,
+    // N = give up after N consecutive failed attempts (see ReconnectPolicy). Applies to the
+    // channel initialization and to a lost adapter / bus-off detected while running.
 
     public override void SetConfiguration()
     {
         var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "PeakCAN driver");
         deviceId = GetHexId(settings, "deviceId", deviceId);
         bitrate = GetUInt(settings, "bitrate", bitrate);
+        reconnect = ReconnectPolicy.Parse(settings, DefaultReconnectDelayMs, Logger, "PeakCAN driver");
 
         if (Bitrates.TryGetValue(bitrate, out var mappedBaudrate))
         {
@@ -88,7 +100,7 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
             return Task.CompletedTask;
         }
 
-        if (State == CommunicationState.Running)
+        if (State == CommunicationState.Running || runTask is { IsCompleted: false })
         {
             return Task.CompletedTask;
         }
@@ -241,39 +253,65 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
 
     private async Task RunLoopAsync(CancellationToken ct)
     {
+        var protocolsStarted = false;
         string? stopMessage = null;
         try
         {
-            Connect();
-            SetupReceiveEvent();
-
-            foreach (var protocol in Protocols)
-            {
-                // The bus is usable from here on: give transmitting protocols (e.g. an XCP master)
-                // their TX path before they start.
-                if (protocol is ITransportProtocol<CanFrame> transportProtocol)
-                {
-                    transportProtocol.SetTransmitter((frame, token) => SendAsync(frame, token));
-                }
-
-                await protocol.StartAsync(ct);
-            }
-
-            NotifyProtocolsTransportConnectionChanged(true);
-            SetState(CommunicationState.Running);
-
             while (!ct.IsCancellationRequested && !exitRequested)
             {
-                await WaitOneAsync(receiveEvent!, ct);
-                if (ct.IsCancellationRequested || exitRequested)
+                try
+                {
+                    Connect();
+                    SetupReceiveEvent();
+                    reconnect.ResetAfterSuccess();
+
+                    // The bus is usable from here on: give transmitting protocols (e.g. an XCP master)
+                    // their TX path before they start.
+                    SetTransmitters((frame, token) => SendAsync(frame, token));
+                    NotifyProtocolsTransportConnectionChanged(true);
+
+                    if (!protocolsStarted)
+                    {
+                        foreach (var protocol in Protocols)
+                        {
+                            await protocol.StartAsync(ct);
+                        }
+
+                        protocolsStarted = true;
+                    }
+
+                    SetState(CommunicationState.Running, $"deviceId=0x{deviceId:X2}, {bitrate} bit/s");
+                    await ReceiveLoopAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested || exitRequested)
                 {
                     break;
                 }
-
-                var frames = ReadFrames();
-                if (frames.Count > 0)
+                catch (Exception e) when (e is PeakCanException or InvalidOperationException)
                 {
-                    await DispatchAsync(frames, ct);
+                    if (ct.IsCancellationRequested || exitRequested)
+                    {
+                        break;
+                    }
+
+                    if (!reconnect.RegisterFailure())
+                    {
+                        stopMessage = reconnect.GiveUpMessage(e.Message);
+                        Logger?.Log(LogLevel.Error, $"PeakCAN driver '{Label}' (deviceId=0x{deviceId:X2}) {stopMessage}");
+                        break;
+                    }
+
+                    Logger?.Log(reconnect.FailureLogLevel(),
+                        $"PeakCAN driver '{Label}' (deviceId=0x{deviceId:X2}) failed ({reconnect.AttemptText}): {e.Message} "
+                        + $"Reconnecting in {reconnect.ReconnectDelayMs} ms.");
+                    SetState(CommunicationState.Faulted, $"deviceId=0x{deviceId:X2}: {e.Message}");
+                    await Task.Delay(reconnect.ReconnectDelayMs, ct);
+                }
+                finally
+                {
+                    NotifyProtocolsTransportConnectionChanged(false);
+                    SetTransmitters(null);
+                    Disconnect();
                 }
             }
         }
@@ -281,26 +319,74 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
         {
             // Normal stop.
         }
-        catch (Exception e)
-        {
-            stopMessage = e.Message;
-            Logger?.Log(LogLevel.Error, $"PeakCAN driver '{Label}' run loop failed: {e.Message}");
-        }
         finally
         {
-            NotifyProtocolsTransportConnectionChanged(false);
-            await StopProtocolsAsync();
-            foreach (var protocol in Protocols)
+            if (protocolsStarted)
             {
-                if (protocol is ITransportProtocol<CanFrame> transportProtocol)
-                {
-                    transportProtocol.SetTransmitter(null);
-                }
+                await StopProtocolsAsync();
             }
 
+            SetTransmitters(null);
             Disconnect();
+
+            // A give-up keeps its reason visible in the driver state (and in the log as Error).
             SetState(CommunicationState.Stopped, stopMessage);
             exitRequested = false;
+        }
+    }
+
+    /// <summary>
+    /// Reads frames whenever the adapter signals them; between frames it checks the channel
+    /// every <see cref="HealthCheckMs"/>, because a pulled adapter or a bus-off never raises the
+    /// receive event. A fatal channel status ends the loop with a PeakCanException, which the run
+    /// loop turns into a reconnect attempt.
+    /// </summary>
+    private async Task ReceiveLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && !exitRequested)
+        {
+            var signaled = await WaitOneAsync(receiveEvent!, HealthCheckMs, ct);
+            if (ct.IsCancellationRequested || exitRequested)
+            {
+                break;
+            }
+
+            if (!signaled)
+            {
+                ThrowIfChannelLost(PCANBasic.GetStatus(channelHandle));
+                continue;
+            }
+
+            var frames = ReadFrames();
+            if (frames.Count > 0)
+            {
+                await DispatchAsync(frames, ct);
+            }
+        }
+    }
+
+    private void SetTransmitters(Func<CanFrame, CancellationToken, Task>? transmitter)
+    {
+        foreach (var protocol in Protocols)
+        {
+            if (protocol is ITransportProtocol<CanFrame> transportProtocol)
+            {
+                transportProtocol.SetTransmitter(transmitter);
+            }
+        }
+    }
+
+    // Statuses after which the channel is not usable any more (adapter unplugged, handle gone,
+    // bus-off); everything else is reported and the loop carries on.
+    private static bool IsChannelLost(TPCANStatus status) =>
+        (status & (TPCANStatus.PCAN_ERROR_ILLHW | TPCANStatus.PCAN_ERROR_ILLHANDLE
+                   | TPCANStatus.PCAN_ERROR_INITIALIZE | TPCANStatus.PCAN_ERROR_BUSOFF)) != 0;
+
+    private void ThrowIfChannelLost(TPCANStatus status)
+    {
+        if (IsChannelLost(status))
+        {
+            throw new PeakCanException(status, $"CAN channel lost: {GetErrorText(status)}");
         }
     }
 
@@ -344,6 +430,7 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
 
         if (status != TPCANStatus.PCAN_ERROR_QRCVEMPTY)
         {
+            ThrowIfChannelLost(status);
             Logger?.Log(LogLevel.Warn, $"PeakCAN driver '{Label}' read returned: {GetErrorText(status)}");
         }
 
@@ -368,21 +455,21 @@ public class CanDriver : DriverBase, IProtocolVariableCommandDriver, ITransportS
                + 1000UL * 0x1_0000_0000UL * timestamp.millis_overflow;
     }
 
-    // Awaits an OS wait handle without blocking a thread — bridges the PCAN receive event into async.
-    private static async Task WaitOneAsync(WaitHandle waitHandle, CancellationToken ct)
+    // Awaits an OS wait handle without blocking a thread; bridges the PCAN receive event into async.
+    // Returns false when the timeout elapsed without the event being signaled.
+    private static async Task<bool> WaitOneAsync(WaitHandle waitHandle, int timeoutMs, CancellationToken ct)
     {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var ctr = ct.Register(static state => ((TaskCompletionSource)state!).TrySetCanceled(), tcs);
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var ctr = ct.Register(static state => ((TaskCompletionSource<bool>)state!).TrySetCanceled(), tcs);
         var registration = ThreadPool.RegisterWaitForSingleObject(
             waitHandle,
-            static (state, _) => ((TaskCompletionSource)state!).TrySetResult(),
+            static (state, timedOut) => ((TaskCompletionSource<bool>)state!).TrySetResult(!timedOut),
             tcs,
-            Timeout.InfiniteTimeSpan,
+            TimeSpan.FromMilliseconds(timeoutMs),
             executeOnlyOnce: true);
-
         try
         {
-            await tcs.Task.ConfigureAwait(false);
+            return await tcs.Task.ConfigureAwait(false);
         }
         finally
         {
