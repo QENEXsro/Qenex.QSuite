@@ -172,6 +172,15 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         }
 
         ApplyCommand = new RelayCommand<object>(_ => ApplyChanges(), _ => HasChanges);
+        OkCommand = new RelayCommand<object>(_ =>
+        {
+            // Same as Apply; the dialog closes only when the changes were applied,
+            // a validation problem keeps it open with the message shown.
+            if (!HasChanges || ApplyChanges())
+            {
+                parentWindow?.Close();
+            }
+        });
         CancelCommand = new RelayCommand<object>(_ => Cancel());
         AddDriverCommand = new RelayCommand<object>(_ => AddDriver(), _ => CanAddDriver());
         RemoveDriverCommand = new RelayCommand<object>(_ => RemoveDriver(), _ => SelectedDriver != null);
@@ -243,6 +252,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
     public ObservableCollection<ProjectConfigurationScriptWrapper> Scripts { get; }
     public IEnumerable<EnumMemberViewModel> ExecutionModes { get; } = ScriptExecutionModeSource.Visible;
     public RelayCommand<object> ApplyCommand { get; }
+    public RelayCommand<object> OkCommand { get; }
     public RelayCommand<object> CancelCommand { get; }
     public RelayCommand<object> AddDriverCommand { get; }
     public RelayCommand<object> RemoveDriverCommand { get; }
@@ -561,7 +571,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         parentWindow = window;
     }
 
-    private void ApplyChanges()
+    private bool ApplyChanges()
     {
         ErrorMessage = string.Empty;
 
@@ -572,7 +582,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         if (validationProblems.Count > 0)
         {
             ReportValidationProblems(validationProblems);
-            return;
+            return false;
         }
 
         try
@@ -583,7 +593,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         catch (Exception e)
         {
             ErrorMessage = e.Message;
-            return;
+            return false;
         }
 
         // A changed presentation (unit, print format, ...) must refresh the controls of every
@@ -778,6 +788,8 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         }
 
         NotifyHasChangesChanged();
+        // Partially applied communicated variables leave a message the user must see.
+        return communicatedVariableProblems.Count == 0;
     }
 
     private void Cancel()

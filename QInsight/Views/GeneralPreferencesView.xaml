@@ -86,8 +86,8 @@
         </q:QTextBlock>
 
         <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <telerik:RadButton MinWidth="80" Margin="0,0,8,0" Content="OK" Command="{Binding OkCommand}"/>
             <telerik:RadButton MinWidth="80" Margin="0,0,8,0" Content="Apply" Command="{Binding ApplyCommand}"/>
+            <telerik:RadButton MinWidth="80" Margin="0,0,8,0" Content="OK" Command="{Binding OkCommand}"/>
             <telerik:RadButton MinWidth="80" Content="Cancel" Command="{Binding CancelCommand}"/>
         </StackPanel>
     </Grid>
