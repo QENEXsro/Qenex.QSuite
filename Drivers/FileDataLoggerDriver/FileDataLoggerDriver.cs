@@ -37,13 +37,6 @@ public class FileDataLoggerDriver : DriverBase, IProtocolVariableSinkDriver, IDa
     private bool logStreamDirty;
     private long lastIdleFlushTimestamp;
 
-    // TODO(datalog-gap diag): remove after root cause fixed.
-    // Diagnostics: report when the logger stops / resumes recording (to locate gaps in the log).
-    private readonly object skipReportLock = new();
-    private bool isSkipping;
-    private long skippedWhileSkipping;
-    private string? currentSkipReason;
-
     public FileDataLoggerDriver()
     {
         Specification = new SpecificationBase
@@ -140,16 +133,10 @@ public class FileDataLoggerDriver : DriverBase, IProtocolVariableSinkDriver, IDa
             return Task.CompletedTask;
         }
 
-        // TODO(datalog-gap diag): remove after root cause fixed — revert to the plain early-return
-        // (if State != Running || logStream == null || !CanSubscribe(sourceVariable) return).
-        var skipReason = GetSkipReason(sourceVariable);
-        if (skipReason != null)
+        if (State != CommunicationState.Running || logStream == null || !CanSubscribe(sourceVariable))
         {
-            ReportSkip(skipReason);
             return Task.CompletedTask;
         }
-
-        ReportLoggingResumed();
 
         try
         {
@@ -166,67 +153,6 @@ public class FileDataLoggerDriver : DriverBase, IProtocolVariableSinkDriver, IDa
         }
 
         return Task.CompletedTask;
-    }
-
-    // TODO(datalog-gap diag): remove this whole trio (GetSkipReason/ReportSkip/ReportLoggingResumed)
-    // and the skip-tracking fields after root cause fixed.
-    private string? GetSkipReason(IProtocolVariable sourceVariable)
-    {
-        if (State != CommunicationState.Running)
-        {
-            return $"driver state is {State} (not Running)";
-        }
-
-        if (logStream == null)
-        {
-            return "log stream is not open";
-        }
-
-        if (!CanSubscribe(sourceVariable))
-        {
-            return "no sink protocol can process this variable";
-        }
-
-        return null;
-    }
-
-    // Logs ONLY the transition into/out of skipping (not every value), so the log reveals the
-    // exact start and end of a recording gap plus the number of values that were not logged.
-    private void ReportSkip(string reason)
-    {
-        lock (skipReportLock)
-        {
-            if (!isSkipping)
-            {
-                isSkipping = true;
-                currentSkipReason = reason;
-                skippedWhileSkipping = 0;
-                Logger?.Log(
-                    LogLevel.Warn,
-                    $"FileDataLogger STOPPED recording — {reason}. Incoming values are NOT being logged.");
-            }
-
-            skippedWhileSkipping++;
-        }
-    }
-
-    private void ReportLoggingResumed()
-    {
-        lock (skipReportLock)
-        {
-            if (!isSkipping)
-            {
-                return;
-            }
-
-            Logger?.Log(
-                LogLevel.Warn,
-                $"FileDataLogger RESUMED recording after skipping {skippedWhileSkipping} value(s) "
-                + $"(reason was: {currentSkipReason}).");
-            isSkipping = false;
-            currentSkipReason = null;
-            skippedWhileSkipping = 0;
-        }
     }
 
     public override Task StartAsync(CancellationToken ct = default)
