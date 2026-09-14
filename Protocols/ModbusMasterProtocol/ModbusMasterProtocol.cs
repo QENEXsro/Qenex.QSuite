@@ -25,6 +25,9 @@ namespace Qenex.QSuite.Protocols.ModbusMaster;
 public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byte[]>, IProtocolVariableWriteProtocol
 {
     private const int SchedulerIdleMs = 50;
+    // On a plain Disconnect the driver reports the transport down a moment before it stops this
+    // protocol; a short grace keeps a user-initiated stop from being reported as an outage.
+    private const int TransportLossGraceMs = 250;
 
     private ModbusMasterSettings settings = new() { IsTcp = false };
     private string? configurationError = "Modbus master settings were not configured.";
@@ -33,6 +36,9 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
     private volatile Func<byte[], CancellationToken, Task>? transmitter;
 
     private volatile bool exitRequested;
+    // Set by the hosting driver via OnTransportConnectionChanged; the poll loop pauses while the
+    // link is down and resumes by itself when the driver reports it back.
+    private volatile bool transportConnected = true;
     private CancellationTokenSource? runCts;
     private Task? runTask;
 
@@ -92,6 +98,16 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
     public void SetTransmitter(Func<byte[], CancellationToken, Task>? byteTransmitter)
     {
         transmitter = byteTransmitter;
+    }
+
+    /// <summary>
+    /// The hosting driver reports link loss/recovery here (serial port unplugged, TCP peer gone).
+    /// The poll loop keeps running: it waits while the link is down and continues polling the
+    /// moment the driver reopens the transport, without the user having to disconnect/connect.
+    /// </summary>
+    public override void OnTransportConnectionChanged(bool connected)
+    {
+        transportConnected = connected;
     }
 
     #region Protocol variables
@@ -163,6 +179,7 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
 
         SetState(CommunicationState.Starting);
         exitRequested = false;
+        transportConnected = true;
 
         engine = new ModbusMasterEngine(settings.CreateFramer(), Logger)
         {
@@ -248,6 +265,8 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
 
             while (!ct.IsCancellationRequested && !exitRequested)
             {
+                await WaitForTransportAsync(entries, ct);
+
                 var now = Environment.TickCount64;
                 var anyDue = false;
 
@@ -271,10 +290,20 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
                     {
                         throw;
                     }
-                    catch (Exception e) when (e is ModbusSlaveException or ModbusTimeoutException or ModbusProtocolException)
+                    catch (Exception e)
                     {
-                        Logger?.Log(LogLevel.Warn, $"Modbus master: poll of '{entry.Variable.Name}' failed: {e.Message}");
-                        SetState(CommunicationState.Running, $"Poll of '{entry.Variable.Name}' failed: {e.Message}");
+                        // Any single poll failure — slave exception, timeout, or a transport error
+                        // such as the serial port closing under a write — must not end the loop:
+                        // the next cycle waits for the transport if needed and retries.
+                        if (transportConnected)
+                        {
+                            Logger?.Log(LogLevel.Warn, $"Modbus master: poll of '{entry.Variable.Name}' failed: {e.Message}");
+                            SetState(CommunicationState.Running, $"Poll of '{entry.Variable.Name}' failed: {e.Message}");
+                        }
+                        else
+                        {
+                            Logger?.Log(LogLevel.Debug, $"Modbus master: poll of '{entry.Variable.Name}' aborted, transport is down: {e.Message}");
+                        }
                     }
 
                     // Re-anchor to now: after a stall the missed cycles are skipped instead of bursting.
@@ -298,6 +327,43 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
             Logger?.Log(LogLevel.Error, $"Modbus master poll loop failed: {e.Message}");
             SetState(CommunicationState.Faulted, e.Message);
         }
+    }
+
+    /// <summary>
+    /// Blocks while the driver reports the transport down. On resume the poll deadlines are
+    /// re-anchored so the first cycle polls every variable once instead of bursting the cycles
+    /// missed during the outage.
+    /// </summary>
+    private async Task WaitForTransportAsync(List<PollEntry> entries, CancellationToken ct)
+    {
+        if (transportConnected)
+        {
+            return;
+        }
+
+        // A stop cancels ct during the grace, so nothing is reported for a plain Disconnect.
+        await Task.Delay(TransportLossGraceMs, ct);
+        if (transportConnected)
+        {
+            return;
+        }
+
+        Logger?.Log(LogLevel.Info, "Modbus master: transport lost — polling paused until the driver reconnects.");
+        SetState(CommunicationState.Faulted, "Transport lost — waiting for the driver to reconnect.");
+        while (!transportConnected)
+        {
+            await Task.Delay(SchedulerIdleMs, ct);
+        }
+
+        Logger?.Log(LogLevel.Info, "Modbus master: transport is back — polling resumes.");
+        var now = Environment.TickCount64;
+        foreach (var entry in entries)
+        {
+            entry.NextDueMs = now;
+        }
+
+        SetState(CommunicationState.Running,
+            $"Modbus master ({(settings.IsTcp ? "TCP" : "RTU")}, unit {settings.UnitId}): transport reconnected, polling {entries.Count} variable(s).");
     }
 
     private List<PollEntry> BuildPollEntries()
@@ -447,7 +513,7 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
         {
             throw;
         }
-        catch (Exception e) when (e is ModbusSlaveException or ModbusTimeoutException or ModbusProtocolException)
+        catch (Exception e)
         {
             Logger?.Log(LogLevel.Warn, $"Modbus master: write of '{scalarVariable.Name}' failed: {e.Message}");
             SetState(CommunicationState.Running, $"Write of '{scalarVariable.Name}' failed: {e.Message}");
@@ -495,7 +561,7 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
             {
                 throw;
             }
-            catch (Exception e) when (e is ModbusSlaveException or ModbusTimeoutException or ModbusProtocolException)
+            catch (Exception e)
             {
                 Logger?.Log(LogLevel.Warn, $"Modbus master: write of '{matrixVariable.Name}' failed: {e.Message}");
                 SetState(CommunicationState.Running, $"Write of '{matrixVariable.Name}' failed: {e.Message}");
