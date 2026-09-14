@@ -14,7 +14,8 @@ namespace Qenex.QSuite.Drivers.SerialPortDriver;
 /// (framing — e.g. Modbus RTU — is the protocol's job), transmitting protocols get their TX path
 /// via ITransportProtocol&lt;byte[]&gt;, and operator writes are delegated to
 /// IProtocolVariableWriteProtocol implementations (same pattern as the CAN driver).
-/// One driver instance = one COM port. Reopens the port automatically after failures (USB unplug).
+/// One driver instance = one COM port. Reopens the port automatically after failures (USB unplug)
+/// according to the shared <see cref="ReconnectPolicy"/> (reconnectTimeMs / numberOfReconnections).
 /// </summary>
 public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITransportSource<byte[]>
 {
@@ -24,7 +25,8 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
     private Parity parity = Parity.None;
     private StopBits stopBits = StopBits.One;
     private Handshake handshake = Handshake.None;
-    private int reconnectTimeMs = 2000;
+    private const int DefaultReconnectTimeMs = 2000;
+    private ReconnectPolicy reconnect = new(DefaultReconnectTimeMs);
 
     private SerialPort? serialPort;
     private readonly SemaphoreSlim writeLock = new(1, 1);
@@ -47,10 +49,13 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
     }
 
     public override string DefaultRawSettings =>
-        "port=COM1;baudRate=9600;dataBits=8;parity=none;stopBits=1;handshake=none;reconnectTimeMs=2000";
+        "port=COM1;baudRate=9600;dataBits=8;parity=none;stopBits=1;handshake=none;"
+        + ReconnectPolicy.SettingsTemplate(DefaultReconnectTimeMs);
 
     // Settings example: port="COM3";baudRate="19200";dataBits="8";parity="even";stopBits="1";
-    //                   handshake="none";reconnectTimeMs="2000"
+    //                   handshake="none";reconnectTimeMs="2000";numberOfReconnections="-1"
+    // numberOfReconnections: -1 = reopen forever (default), 0 = stop at the first failure,
+    // N = give up after N consecutive failed reopen attempts (see ReconnectPolicy).
     public override void SetConfiguration()
     {
         var settings = ParseSettings(RawSettings);
@@ -58,7 +63,7 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
         portName = GetString(settings, "port", GetString(settings, "portName", portName));
         baudRate = GetInt(settings, "baudRate", baudRate);
         dataBits = GetInt(settings, "dataBits", dataBits);
-        reconnectTimeMs = Math.Max(100, GetInt(settings, "reconnectTimeMs", reconnectTimeMs));
+        reconnect = ReconnectPolicy.Parse(settings, DefaultReconnectTimeMs, Logger, "Serial port driver");
 
         parity = GetString(settings, "parity", "none").ToLowerInvariant() switch
         {
@@ -180,6 +185,7 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
     private async Task RunLoopAsync(CancellationToken ct)
     {
         var protocolsStarted = false;
+        string? stopMessage = null;
         try
         {
             while (!ct.IsCancellationRequested && !exitRequested)
@@ -187,6 +193,7 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
                 try
                 {
                     OpenPort();
+                    reconnect.ResetAfterSuccess();
                     SetTransmitters(SendChunkAsync);
                     NotifyProtocolsTransportConnectionChanged(true);
 
@@ -215,10 +222,18 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
                         break;
                     }
 
-                    Logger?.Log(LogLevel.Warn,
-                        $"Serial port driver '{Label}' ({portName}) failed: {e.Message} Reopening in {reconnectTimeMs} ms.");
+                    if (!reconnect.RegisterFailure())
+                    {
+                        stopMessage = reconnect.GiveUpMessage(e.Message);
+                        Logger?.Log(LogLevel.Error, $"Serial port driver '{Label}' ({portName}) {stopMessage}");
+                        break;
+                    }
+
+                    Logger?.Log(reconnect.FailureLogLevel(),
+                        $"Serial port driver '{Label}' ({portName}) failed ({reconnect.AttemptText}): {e.Message} "
+                        + $"Reopening in {reconnect.ReconnectTimeMs} ms.");
                     SetState(CommunicationState.Faulted, $"{portName}: {e.Message}");
-                    await Task.Delay(reconnectTimeMs, ct);
+                    await Task.Delay(reconnect.ReconnectTimeMs, ct);
                 }
                 finally
                 {
@@ -244,7 +259,8 @@ public class SerialDriver : DriverBase, IProtocolVariableCommandDriver, ITranspo
                 SetTransmitters(null);
             }
 
-            SetState(CommunicationState.Stopped);
+            // A give-up keeps its reason visible in the driver state (and in the log as Error).
+            SetState(CommunicationState.Stopped, stopMessage);
             exitRequested = false;
         }
     }
