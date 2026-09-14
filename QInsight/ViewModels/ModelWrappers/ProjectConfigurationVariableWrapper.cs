@@ -35,7 +35,7 @@ public class ProjectConfigurationVariableWrapper : PropertyChangedBase
     public int Id => currentState.Id;
     public string Name => currentState.Name;
 
-    public string DisplayName => $"{currentState.Label} ({currentState.Id})";
+    public string DisplayName => VariableTypeDisplay.ListName(Variable, currentState.Label, currentState.Id);
 
     public bool HasChanges => !currentState.Equals(originalState);
 
@@ -116,6 +116,10 @@ public class ProjectConfigurationVariableWrapper : PropertyChangedBase
         var properties = new ObservableCollection<EditablePropertyWrapper>
         {
             Create("Variable", "Id", () => currentState.Id, value => UpdateState(currentState with { Id = Parse<int>(value) })),
+            // The kind is fixed at creation (Scalar/Matrix combo next to +) and cannot be switched:
+            // protocol commParams, controls and scripts are bound to it. Shown read-only so the
+            // user can tell a matrix from a scalar without decoding the rows below.
+            new EditablePropertyWrapper("Variable", "Type", () => VariableTypeDisplay.TypeName(Variable), _ => { }, isReadOnly: true),
             Create("Variable", "Namespace", () => currentState.Namespace, value => UpdateState(currentState with { Namespace = value })),
             Create("Variable", "Name", () => currentState.Name, value => UpdateState(currentState with { Name = value })),
             Create("Variable", "Label", () => currentState.Label, value => UpdateState(currentState with { Label = value })),
