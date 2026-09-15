@@ -15,7 +15,7 @@ ExecStartPre=-/usr/sbin/ip link set can0 down
 ExecStartPre=/usr/sbin/ip link set can0 type can bitrate 250000
 ExecStartPre=/usr/sbin/ip link set can0 up
 
-ExecStart=/usr/bin/python3 /home/radek/scripts/can_rnd.py
+ExecStart=/usr/bin/python3 /home/radek/scripts/Qenex_RawCan_RandomWalkGenerator.py
 
 Restart=on-failure
 RestartSec=3
