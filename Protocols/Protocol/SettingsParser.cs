@@ -41,9 +41,11 @@ public static class SettingsParser
 
         if (unknownKeys.Count > 0)
         {
+            var known = knownKeys.Count > 0
+                ? $"Known settings: {string.Join(", ", knownKeys)}."
+                : "This plugin has no settings.";
             logger?.Log(LogLevel.Warn,
-                $"{ownerName}: unknown setting(s) {string.Join(", ", unknownKeys.Select(key => $"'{key}'"))} ignored. "
-                + $"Known settings: {string.Join(", ", knownKeys)}.");
+                $"{ownerName}: unknown setting(s) {string.Join(", ", unknownKeys.Select(key => $"'{key}'"))} ignored. {known}");
         }
 
         return settings;

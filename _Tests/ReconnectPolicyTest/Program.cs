@@ -1,4 +1,4 @@
-using Qenex.QSuite.Drivers.Driver;
+﻿using Qenex.QSuite.Drivers.Driver;
 using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.Protocols.Protocol;
 
@@ -153,6 +153,18 @@ internal static class Program
         var clean = new CapturingLogger();
         SettingsParser.Parse("port=COM1;baudRate=9600", ["port", "baudRate"], clean, "Serial port driver");
         Check(clean.Messages.Count == 0, "parser: no warning when every key is known");
+
+        // A plugin without settings (Simulation / Virtual drivers and protocols): a legacy key such as
+        // periodes= is reported too, with a message that says the plugin takes no settings at all.
+        var none = new CapturingLogger();
+        SettingsParser.Parse("periodes=20", [], none, "Simulation driver");
+        Check(none.Messages.Count == 1 && none.Messages[0].Level == LogLevel.Warn
+              && none.Messages[0].Text.Contains("'periodes'") && none.Messages[0].Text.Contains("has no settings"),
+            "parser: plugin without settings warns and says so");
+
+        var noneClean = new CapturingLogger();
+        SettingsParser.Parse("", [], noneClean, "Simulation driver");
+        Check(noneClean.Messages.Count == 0, "parser: plugin without settings and empty text stays quiet");
     }
 
     private static void KeepAliveParseAndApply()

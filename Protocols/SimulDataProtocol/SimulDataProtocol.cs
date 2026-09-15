@@ -49,8 +49,11 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
 
     #region Configuration
 
+    // The protocol has no settings (everything lives in the variables' commParam); any key in
+    // the project is reported as unknown through the shared parser.
     public override void SetConfiguration()
     {
+        SettingsParser.Parse(RawSettings, [], Logger, "Simulation Signals protocol");
     }
 
     // "signal" picks one of the catalog generators (step, noisystep, walk1-3, laosstrain,
