@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using Qenex.QSuite.Common.CoreComm;
+using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.Protocols.Protocol;
 using Qenex.QSuite.Specifications.Specification;
 using Qenex.QSuite.Variables.QVariables;
@@ -10,7 +12,15 @@ using Qenex.QSuite.Variables.VariableEvents;
 
 namespace Qenex.QSuite.Protocols.JsonSignalProtocol;
 
-public class JsonSignalProtocol : ProtocolBase<byte[]>
+/// <summary>
+/// Newline-delimited JSON signal stream, one message per line in both directions:
+/// <c>{"name": "temp", "value": 23.4, "t": 12.345}</c>. The device sends the signals it measures
+/// (variables with direction read / readWrite); QInsight sends the same kind of line for every
+/// operator or script write of a variable with direction write / readWrite, so a device can be
+/// controlled without any second protocol. The optional "t" (device time in seconds) rebuilds the
+/// sample timestamps. Runs on any byte-stream driver: TCP client, TCP server or serial port.
+/// </summary>
+public class JsonSignalProtocol : ProtocolBase<byte[]>, ITransportProtocol<byte[]>, IProtocolVariableWriteProtocol
 {
     private volatile bool exitRequested;
     private readonly EventWaitHandle waitHandle;
@@ -21,6 +31,18 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
     private readonly Lock framerLock = new();
     private DateTime? sourceTimeBaseUtc;
     private double? lastSourceTimeSeconds;
+    private Func<byte[], CancellationToken, Task>? transmitter;
+
+    // Dropped input is reported once per cause so a silent signal can be diagnosed from the log
+    // without the log being flooded by a device that sends one bad line per sample.
+    private readonly ConcurrentDictionary<string, byte> reportedUnknownNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> reportedBadValues = new(StringComparer.OrdinalIgnoreCase);
+    private int reportedUnparsableLines;
+
+    // A serial port (or a TCP server accepting mid-stream) opens in the middle of a message: the
+    // first "line" is the tail of it. That fragment is dropped without a warning; anything
+    // unparsable after the first complete line is a real problem and gets reported.
+    private volatile bool expectFragmentAfterConnect;
 
     public JsonSignalProtocol()
     {
@@ -31,7 +53,7 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
         {
             Name = "JsonSignalProtocol",
             Label = "JSON Signal Stream",
-            Description = "Decodes newline-delimited JSON signal messages. Use with the TCP Client driver.",
+            Description = "Newline-delimited JSON signal messages in both directions ({\"name\": ..., \"value\": ...}). Use with the TCP Client, TCP Server or Serial Port driver.",
             CreatedOn = new DateTime(2026, 6, 1),
             Version = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0),
             Author = "Qenex",
@@ -39,9 +61,22 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
         };
     }
 
+    #region Configuration
+
+    // The protocol has no settings of its own; the shared parser reports a stray key as unknown.
     public override void SetConfiguration()
     {
+        SettingsParser.Parse(RawSettings, [], Logger, "JSON Signal protocol");
     }
+
+    public override string CreateDefaultCommParam(IVariableBase variable, IEnumerable<IVarEvent> variableEvents)
+    {
+        return $"direction=\"read\";name=\"{variable.Name}\"";
+    }
+
+    #endregion
+
+    #region Protocol variables
 
     public override IProtocolVariable? CreateProtocolVariable(IVariableBase variable, string commParams, bool isCommunicated)
     {
@@ -55,7 +90,7 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
 
     public override IProtocolVariable? CreateProtocolVariable(IVariableBase variable, IVarEvent variableEvent, string id)
     {
-        return CreateProtocolVariable(variable, $"id=\"{id}\"", true);
+        return CreateProtocolVariable(variable, $"name=\"{id}\"", true);
     }
 
     public override IProtocolVariable? CreateProtocolVariable(
@@ -67,16 +102,26 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
         return CreateProtocolVariable(variable, commParams, isCommunicated);
     }
 
+    #endregion
+
+    #region Protocol control
+
     public override Task StartAsync(CancellationToken ct = default)
     {
         if (!IsEnabled) return Task.CompletedTask;
+
         exitRequested = false;
         sourceTimeBaseUtc = null;
         lastSourceTimeSeconds = null;
+        reportedUnknownNames.Clear();
+        reportedBadValues.Clear();
+        reportedUnparsableLines = 0;
+        expectFragmentAfterConnect = true;
         lock (framerLock)
         {
             lineFramer.Reset();
         }
+
         _ = RunLoopAsync(ct);
         return Task.CompletedTask;
     }
@@ -92,6 +137,26 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
     {
         waitHandle.Dispose();
     }
+
+    // The driver reopened its port / connection: the byte stream restarts, possibly mid-message.
+    public override void OnTransportConnectionChanged(bool connected)
+    {
+        if (!connected)
+        {
+            return;
+        }
+
+        lock (framerLock)
+        {
+            lineFramer.Reset();
+        }
+
+        expectFragmentAfterConnect = true;
+    }
+
+    #endregion
+
+    #region Received data
 
     public override Task AddReceivedDataToQueueAsync(IEnumerable<byte[]> data, CancellationToken ct = default)
     {
@@ -129,11 +194,6 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
         await Task.WhenAll(notifyTasks);
     }
 
-    protected override IEnumerable<byte[]> Encode(IEnumerable<IProtocolVariable> protocolVariables)
-    {
-        throw new NotSupportedException("JSON signal protocol does not encode outgoing data.");
-    }
-
     protected override IEnumerable<IProtocolVariable> Decode(IEnumerable<byte[]> data)
     {
         return ToLines(data)
@@ -166,10 +226,18 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
                 if (receivedDataQueue.Count > 0)
                 {
                     receivedDataQueue.TryDequeue(out var line);
-                    var protocolVariable = ApplyMessage(line!);
-                    if (protocolVariable != null)
+                    try
                     {
-                        await protocolVariable.NotifyValueChangedAsync();
+                        var protocolVariable = ApplyMessage(line!);
+                        if (protocolVariable != null)
+                        {
+                            await protocolVariable.NotifyValueChangedAsync();
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        // One bad message must not kill the consumer loop for the rest of the session.
+                        Logger?.Log(LogLevel.Error, $"JSON Signal protocol: message processing failed: {e}");
                     }
                 }
                 else
@@ -185,14 +253,40 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
 
     private IProtocolVariable? ApplyMessage(string line)
     {
-        if (!TryParseMessage(line, out var signalName, out var value, out var sourceTimeSeconds))
+        if (string.IsNullOrWhiteSpace(line))
         {
             return null;
         }
 
+        if (!TryParseMessage(line, out var signalName, out var value, out var sourceTimeSeconds))
+        {
+            if (expectFragmentAfterConnect)
+            {
+                // The tail of a message that was already in flight when the port opened.
+                expectFragmentAfterConnect = false;
+                return null;
+            }
+
+            // Only the first bad line is quoted; a device that keeps sending them would fill the log.
+            if (Interlocked.Increment(ref reportedUnparsableLines) == 1)
+            {
+                Logger?.Log(LogLevel.Warn,
+                    $"JSON Signal protocol: line ignored, expected {{\"name\": ..., \"value\": ...}} — got '{Truncate(line)}'. Further unparsable lines are not reported.");
+            }
+
+            return null;
+        }
+
+        expectFragmentAfterConnect = false;
         var protocolVariable = FindProtocolVariable(signalName);
         if (protocolVariable == null)
         {
+            if (reportedUnknownNames.TryAdd(signalName, 0))
+            {
+                Logger?.Log(LogLevel.Warn,
+                    $"JSON Signal protocol: no readable variable has name=\"{signalName}\"; its messages are ignored.");
+            }
+
             return null;
         }
 
@@ -204,16 +298,32 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
         }
         catch (Exception e) when (e is FormatException or InvalidCastException or InvalidOperationException or OverflowException or ArgumentException)
         {
+            if (reportedBadValues.TryAdd(signalName, 0))
+            {
+                Logger?.Log(LogLevel.Warn,
+                    $"JSON Signal protocol: value '{value}' of \"{signalName}\" cannot be converted to variable '{protocolVariable.Variable.Name}' ({e.Message}); such messages are ignored.");
+            }
+
             return null;
         }
     }
 
+    // Incoming messages feed the variables the device is allowed to send: read and readWrite.
     private IProtocolVariable? FindProtocolVariable(string signalName)
     {
         return Variables.FirstOrDefault(variable =>
             variable.IsCommunicated
-            && variable.ProtocolVariableSpecification is JsonSignalProtocolVariableSpecification spec
+            && variable.ProtocolVariableSpecification is JsonSignalProtocolVariableSpecification
+            {
+                Direction: CommDirection.Read or CommDirection.ReadWrite
+            } spec
             && string.Equals(spec.SignalName, signalName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string Truncate(string line)
+    {
+        const int maxLength = 80;
+        return line.Length <= maxLength ? line : line[..maxLength] + "…";
     }
 
     private bool TryParseMessage(
@@ -230,14 +340,16 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
         {
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
-            if (!root.TryGetProperty("name", out var nameElement) ||
-                !root.TryGetProperty("value", out var valueElement))
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("name", out var nameElement)
+                || !root.TryGetProperty("value", out var valueElement))
             {
                 return false;
             }
 
             signalName = nameElement.GetString() ?? string.Empty;
             value = valueElement.Clone();
+
             if (root.TryGetProperty("t", out var sourceTimeElement)
                 && TryReadSourceTimeSeconds(sourceTimeElement, out var parsedSourceTimeSeconds))
             {
@@ -333,4 +445,65 @@ public class JsonSignalProtocol : ProtocolBase<byte[]>
 
         return variable.GetValue()?.GetType() ?? typeof(double);
     }
+
+    #endregion
+
+    #region Writes to the device
+
+    public void SetTransmitter(Func<byte[], CancellationToken, Task>? byteTransmitter)
+    {
+        transmitter = byteTransmitter;
+    }
+
+    /// <summary>Writable are the protocol's variables with direction write or readWrite.</summary>
+    public bool CanWriteVariable(IProtocolVariable protocolVariable)
+    {
+        return Variables.Contains(protocolVariable)
+               && protocolVariable.ProtocolVariableSpecification is JsonSignalProtocolVariableSpecification
+               {
+                   Direction: CommDirection.Write or CommDirection.ReadWrite
+               };
+    }
+
+    /// <summary>Sends one {"name": ..., "value": ...} line carrying the variable's current value.</summary>
+    public async Task WriteVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        var currentTransmitter = transmitter
+            ?? throw new InvalidOperationException("Transport is not available (no transmitter injected).");
+
+        foreach (var line in Encode([protocolVariable]))
+        {
+            await currentTransmitter(line, ct);
+        }
+    }
+
+    // The outgoing line has the same shape as the incoming one, so a device needs one parser
+    // for both directions. The raw value is sent: a presentation's conversion has already been
+    // inverted by QInsight when the operator entered the engineering value.
+    protected override IEnumerable<byte[]> Encode(IEnumerable<IProtocolVariable> protocolVariables)
+    {
+        foreach (var protocolVariable in protocolVariables)
+        {
+            if (protocolVariable.ProtocolVariableSpecification is not JsonSignalProtocolVariableSpecification spec)
+            {
+                continue;
+            }
+
+            var value = protocolVariable.Variable.GetValue();
+            var jsonValue = value switch
+            {
+                null => "null",
+                bool b => b ? "true" : "false",
+                string s => JsonSerializer.Serialize(s),
+                Enum e => JsonSerializer.Serialize(e.ToString()),
+                IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+                _ => JsonSerializer.Serialize(value.ToString())
+            };
+
+            var line = $"{{\"name\": {JsonSerializer.Serialize(spec.SignalName)}, \"value\": {jsonValue}}}\n";
+            yield return Encoding.UTF8.GetBytes(line);
+        }
+    }
+
+    #endregion
 }
