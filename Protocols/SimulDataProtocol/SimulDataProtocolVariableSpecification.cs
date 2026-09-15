@@ -1,4 +1,4 @@
-using Qenex.QSuite.Protocols.Protocol;
+﻿using Qenex.QSuite.Protocols.Protocol;
 using Qenex.QSuite.Variables.VariableEvents;
 
 namespace Qenex.QSuite.Protocols.SimulDataProtocol;
@@ -11,32 +11,34 @@ public class SimulDataProtocolVariableSpecification : ProtVariableSpecification
     }
 
     public IVarEvent? VariableEvent { get; set; }
-    public string Id { get; set; } = string.Empty;
 
     /// <summary>Signal catalog key (see <see cref="SimulSignalCatalog"/>); empty = fallback by value type.</summary>
     public string Signal { get; set; } = string.Empty;
 
-    /// <summary>Optional generator overrides (amp=, freq=, nonlin=); null = signal default.</summary>
-    public double? Amplitude { get; set; }
-    public double? Frequency { get; set; }
-    public double? Nonlinearity { get; set; }
+    /// <summary>
+    /// Optional generator overrides (amp=, freq=, nonlin=); null = signal default. The property
+    /// names equal the commParam keys on purpose: the inherited reflection-based ToCommParam writes
+    /// the project back with property names, so a mismatch would lose the values on the next load.
+    /// </summary>
+    public double? Amp { get; set; }
+    public double? Freq { get; set; }
+    public double? Nonlin { get; set; }
 
     /// <summary>
     /// Optional initial value (init=) of a writable parameter variable: the protocol writes it
     /// into the variable at every start (the simulated device's power-on default) and notifies,
     /// so controls show it. Null = the variable keeps whatever value it has.
     /// </summary>
-    public double? InitialValue { get; set; }
+    public double? Init { get; set; }
 
     public CommDirection Direction { get; set; } = CommDirection.Read;
 
-    public static SimulDataProtocolVariableSpecification CreateDefault(IVarEvent? variableEvent, string id)
+    public static SimulDataProtocolVariableSpecification CreateDefault(IVarEvent? variableEvent)
     {
         return new SimulDataProtocolVariableSpecification
         {
             VariableEvent = variableEvent,
-            Direction = CommDirection.Read,
-            Id = id
+            Direction = CommDirection.Read
         };
     }
 
@@ -58,12 +60,11 @@ public class SimulDataProtocolVariableSpecification : ProtVariableSpecification
         {
             VariableEvent = variableEvent,
             Direction = direction,
-            Id = parameters.GetValueOrDefault("id", string.Empty),
             Signal = parameters.GetValueOrDefault("signal", string.Empty).ToLowerInvariant(),
-            Amplitude = ParseDouble(parameters, "amp"),
-            Frequency = ParseDouble(parameters, "freq"),
-            Nonlinearity = ParseDouble(parameters, "nonlin"),
-            InitialValue = ParseDouble(parameters, "init")
+            Amp = ParseDouble(parameters, "amp"),
+            Freq = ParseDouble(parameters, "freq"),
+            Nonlin = ParseDouble(parameters, "nonlin"),
+            Init = ParseDouble(parameters, "init")
         };
     }
 
