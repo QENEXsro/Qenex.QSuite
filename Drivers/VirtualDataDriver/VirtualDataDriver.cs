@@ -33,9 +33,10 @@ public class VirtualDataDriver : DriverBase, ITransportSource<VirtualWrite>
 
     #region Configuration
 
-    // The driver has no settings.
+    // The driver has no settings; any key in the project is reported as unknown (shared parser).
     public override void SetConfiguration()
     {
+        SettingsParser.Parse(RawSettings, [], Logger, "Virtual Variables Host driver");
     }
 
     #endregion

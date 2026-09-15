@@ -41,8 +41,10 @@ public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAware
     #region Configuration
 
     // The protocol has no protocol-level settings; everything the variable needs is its identity.
+    // Any key in the project is reported as unknown through the shared parser.
     public override void SetConfiguration()
     {
+        SettingsParser.Parse(RawSettings, [], Logger, "Virtual Variables protocol");
     }
 
     public override string CreateDefaultCommParam(IVariableBase variable, IEnumerable<IVarEvent> variableEvents)

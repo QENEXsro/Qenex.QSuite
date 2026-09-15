@@ -33,10 +33,12 @@ public class SimDriver : DriverBase, ITransportSource<int>
 
     #region Configuration
 
-    // Legacy projects may still carry "periodes=..." in the settings; the value is obsolete
-    // (signal periods come from the variables' events) and is silently ignored.
+    // The driver has no settings. Legacy projects may still carry "periodes=..." (signal periods
+    // now come from the variables' events); like every other plugin, an unknown key is reported
+    // as a warning through the shared parser instead of being ignored silently.
     public override void SetConfiguration()
     {
+        SettingsParser.Parse(RawSettings, [], Logger, "Simulation driver");
     }
 
     #endregion
