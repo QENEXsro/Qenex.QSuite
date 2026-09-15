@@ -556,6 +556,19 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         SelectedNavigationItem = NavigationItems.First(item => item.Section == section);
     }
 
+    // After removing the item at removedIndex the selection stays on the item just above it (the "previous"
+    // row from the user's point of view); removing the first row selects the new first row. Jumping back to
+    // the top of the list on every removal was reported as annoying when cleaning up several variables in a row.
+    private static T? NeighbourAfterRemoval<T>(IList<T> items, int removedIndex) where T : class
+    {
+        if (items.Count == 0)
+        {
+            return null;
+        }
+
+        return items[Math.Clamp(removedIndex - 1, 0, items.Count - 1)];
+    }
+
     private void EnsureInitialVariableSelections()
     {
         SelectedVariable ??= Variables.FirstOrDefault();
@@ -1770,6 +1783,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             RemoveCommunicatedVariable(communicatedVariable);
         }
 
+        var removedIndex = Variables.IndexOf(variable);
         variable.PropertyChanged -= OnVariablePropertyChanged;
         Variables.Remove(variable);
 
@@ -1778,7 +1792,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             removedVariables.Add(variable);
         }
 
-        SelectedVariable = Variables.FirstOrDefault();
+        SelectedVariable = NeighbourAfterRemoval(Variables, removedIndex);
         ExportVariablesCommand?.OnCanExecuteChanged();
         NotifyHasChangesChanged();
     }
@@ -2842,6 +2856,9 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
 
     private void RemoveCommunicatedVariable(ProjectConfigurationProtocolVariableWrapper communicatedVariable)
     {
+        // Captured before Remove: the list clears its selection (pushes null) when the selected item leaves.
+        var wasSelected = ReferenceEquals(SelectedCommunicatedVariable, communicatedVariable);
+        var removedIndex = CommunicatedVariables.IndexOf(communicatedVariable);
         communicatedVariable.PropertyChanged -= OnCommunicatedVariablePropertyChanged;
         CommunicatedVariables.Remove(communicatedVariable);
         communicatedVariable.SelectedSource.Protocol.RemoveProtocolVariable(communicatedVariable.ProtocolVariable);
@@ -2853,7 +2870,11 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
                 communicatedVariable.SelectedSource));
         }
 
-        SelectedCommunicatedVariable = CommunicatedVariables.FirstOrDefault();
+        if (wasSelected)
+        {
+            SelectedCommunicatedVariable = NeighbourAfterRemoval(CommunicatedVariables, removedIndex);
+        }
+
         RemoveVariableCommand?.OnCanExecuteChanged();
         NotifyHasChangesChanged();
         NotifyCommunicatedSignalsWarningChanged();
