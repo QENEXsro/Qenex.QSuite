@@ -8,59 +8,87 @@
         xmlns:vm="clr-namespace:Qenex.QInsight.ViewModels"
         xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
         mc:Ignorable="d"
-        Height="350" Width="650"
+        Height="310" Width="650"
         d:DataContext="{d:DesignInstance vm:AboutAppViewModel, IsDesignTimeCreatable=False}">
-    <Grid>
+    <Grid Margin="5">
 
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <Border Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Margin="5" Width="300" Height="300" 
-                BorderBrush="Black" BorderThickness="1">
+        <Border Grid.Column="0" Width="300" Height="300"
+                BorderBrush="{telerik:Windows11Resource ResourceKey=StrokeBrush}" BorderThickness="1">
             <Image Margin="2" Source="/Icons/About.png"/>
         </Border>
 
+        <!-- Text column, exactly as tall as the picture so both share the same top and bottom edge:
+             title + tagline at the top, the details block centred in the remaining space, and a footer
+             (copyright left, Close right) sitting on the picture's bottom edge. -->
+        <Grid Grid.Column="1" Height="300" Margin="20,0,10,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <StackPanel Grid.Column="1" Grid.Row="0"  DockPanel.Dock="Top" Orientation="Vertical">
-            <TextBlock  Text="QInsight" FontSize="52" FontFamily="Segoe UI Light" FontWeight="Bold" FontStyle="Normal" Foreground="DodgerBlue"
-                        HorizontalAlignment="Center"/>
-            <TextBlock  Margin="0,0,0,0" Text="From raw data to real understanding." 
-                        FontSize="15" FontWeight="Bold" FontStyle="Italic" HorizontalAlignment="Center"/>
-            <TextBlock  Margin="0,15,0,0" Text="Tune, debug, and analyze your devices" 
-                        HorizontalAlignment="Center" FontSize="15" FontWeight="Bold" FontStyle="Italic"/>
-            <TextBlock  Margin="0,5,0,0" Text="in real-time!" 
-                        HorizontalAlignment="Center" FontSize="15" FontWeight="Bold" FontStyle="Italic"/>
-
-            <StackPanel Orientation="Horizontal" Margin="0,25,0,0" HorizontalAlignment="Center">
-                <TextBlock  Text="Version:" FontSize="14" FontWeight="Normal" FontStyle="Normal"/>
-                <TextBlock  Margin="10,0,0,0" Text="{Binding Version}" FontSize="14" FontStyle="Normal"/>
+            <StackPanel Grid.Row="0">
+                <!-- Negative top margin compensates the font's internal leading so the cap height of "QInsight"
+                     (not the invisible line box) starts level with the picture's top border. -->
+                <TextBlock Text="QInsight" FontSize="48" FontFamily="Segoe UI" FontWeight="Light" Margin="0,-12,0,0"
+                           Foreground="{telerik:Windows11Resource ResourceKey=AccentBrush}"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Margin="0,4,0,0" FontSize="15" TextAlignment="Center" HorizontalAlignment="Center">
+                    <Run Text="Measure, calibrate and analyze"/><LineBreak/>
+                    <Run Text="your devices in real time."/>
+                </TextBlock>
             </StackPanel>
-            <TextBlock  Margin="0,5,0,0" Text="QENEX s.r.o." FontSize="14" 
-                        HorizontalAlignment="Center" FontWeight="Normal" FontStyle="Normal"/>
-            <TextBlock  Margin="0,5,0,0" Text="{Binding Copyright}" 
-                        HorizontalAlignment="Center" FontSize="14" FontWeight="Normal" FontStyle="Normal"/>
-            <TextBlock  Margin="0,10,0,0"
-                        HorizontalAlignment="Center" FontWeight="Normal" FontStyle="Normal">
-                 <Hyperlink FontSize="14" NavigateUri="https://www.qenex.net" RequestNavigate="Hyperlink_RequestNavigate">
-                     https:/www.qenex.net
-                 </Hyperlink>
-            </TextBlock>
-        </StackPanel>
 
-        <Button Grid.Column="1" Grid.Row="1" Margin="10,10,10,20" Content="Close" DockPanel.Dock="Bottom" Width="70">
-            <i:Interaction.Triggers>
-                <i:EventTrigger EventName="Click">
-                    <i:InvokeCommandAction Command="{Binding CloseCommand}" PassEventArgsToCommand="True"/>
-                </i:EventTrigger>
-            </i:Interaction.Triggers>
-        </Button>
+            <!-- Details block and the copyright line form one centred group in the middle of the column. -->
+            <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid HorizontalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.Resources>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="FontSize" Value="14"/>
+                            <Setter Property="Margin" Value="0,0,0,8"/>
+                        </Style>
+                    </Grid.Resources>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Version" Margin="0,0,14,8"
+                               Foreground="{telerik:Windows11Resource ResourceKey=SecondaryForegroundBrush}"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Version}"/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Company" Margin="0,0,14,8"
+                               Foreground="{telerik:Windows11Resource ResourceKey=SecondaryForegroundBrush}"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="QENEX s.r.o."/>
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Web" Margin="0,0,14,8"
+                               Foreground="{telerik:Windows11Resource ResourceKey=SecondaryForegroundBrush}"/>
+                    <TextBlock Grid.Row="2" Grid.Column="1">
+                        <Hyperlink NavigateUri="https://www.qenex.net" RequestNavigate="Hyperlink_RequestNavigate">www.qenex.net</Hyperlink>
+                    </TextBlock>
+                </Grid>
+                <TextBlock Margin="0,12,0,0" FontSize="12" HorizontalAlignment="Center"
+                           Foreground="{telerik:Windows11Resource ResourceKey=SecondaryForegroundBrush}">
+                    <Run Text="{Binding Copyright, Mode=OneWay}"/><Run Text=" QENEX s.r.o. All rights reserved."/>
+                </TextBlock>
+            </StackPanel>
+
+            <!-- Close alone on the picture's bottom edge. -->
+            <Button Grid.Row="2" Content="Close" Width="80" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                <i:Interaction.Triggers>
+                    <i:EventTrigger EventName="Click">
+                        <i:InvokeCommandAction Command="{Binding CloseCommand}" PassEventArgsToCommand="True"/>
+                    </i:EventTrigger>
+                </i:Interaction.Triggers>
+            </Button>
+        </Grid>
 
     </Grid>
 </UserControl>
