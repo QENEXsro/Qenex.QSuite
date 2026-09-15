@@ -64,6 +64,7 @@ Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs c
 
 ; Ukazkove projekty
 Source: "Examples\*.qproj"; DestDir: "{app}\Examples"; Flags: ignoreversion
+Source: "Examples\*.py"; DestDir: "{app}\Examples"; Flags: ignoreversion
 
 ; Ukazkove drivery a protokoly (pluginy z Examples projektu)
 Source: "{#ExamplesDir}\IssDriver\bin\Release\net10.0\Qenex.QSuite.Examples.IssDriver.dll"; DestDir: "{app}\Drivers"; Flags: ignoreversion
