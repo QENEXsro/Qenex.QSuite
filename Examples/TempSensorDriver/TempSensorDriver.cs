@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Reflection;
 using Qenex.QSuite.Common.CoreComm;
 using Qenex.QSuite.Drivers.Driver;
@@ -46,27 +46,36 @@ public class TempSensorDriver : DriverBase, IProtocolVariableCommandDriver, ITra
 
     public override string DefaultRawSettings => "periodMs=500;channels=2";
 
+    private static readonly string[] KnownSettings = ["periodMs", "channels"];
+
     public override void SetConfiguration()
     {
-        // "key=value;..." — missing or invalid keys silently keep the defaults, so a freshly
-        // added driver with empty settings does not spam the log.
-        foreach (var part in RawSettings.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var pair = part.Split('=', 2, StringSplitOptions.TrimEntries);
-            if (pair.Length != 2)
-            {
-                continue;
-            }
+        // The shared parser splits "key=value;..." and warns about every key it does not know,
+        // the same way the built-in drivers do. A missing key keeps the default; an invalid
+        // value is reported and the default stays.
+        var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "Temperature sensor driver");
 
-            if (pair[0].Equals("periodMs", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(pair[1], out var parsedPeriod) && parsedPeriod > 0)
+        if (settings.TryGetValue("periodMs", out var periodText))
+        {
+            if (int.TryParse(periodText, out var parsedPeriod) && parsedPeriod > 0)
             {
                 periodMs = parsedPeriod;
             }
-            else if (pair[0].Equals("channels", StringComparison.OrdinalIgnoreCase)
-                     && int.TryParse(pair[1], out var parsedChannels))
+            else
+            {
+                Logger?.Log(LogLevel.Warn, $"Temperature sensor driver: invalid periodMs '{periodText}', using {periodMs} ms.");
+            }
+        }
+
+        if (settings.TryGetValue("channels", out var channelsText))
+        {
+            if (int.TryParse(channelsText, out var parsedChannels))
             {
                 channelCount = Math.Clamp(parsedChannels, 1, 16);
+            }
+            else
+            {
+                Logger?.Log(LogLevel.Warn, $"Temperature sensor driver: invalid channels '{channelsText}', using {channelCount}.");
             }
         }
     }

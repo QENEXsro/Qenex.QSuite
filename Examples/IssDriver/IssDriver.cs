@@ -12,15 +12,22 @@ namespace Qenex.QSuite.Examples.IssDriver;
 /// International Space Station. Every period it performs one HTTP GET and hands the raw JSON
 /// response to its protocols; turning the JSON into variable values is the protocol's job
 /// (see the IssJsonProtocol example).
-/// This is about the smallest possible real-data driver: read-only, one fixed URL, one setting.
+/// This is about the smallest possible real-data driver: read-only, one fixed URL, one setting
+/// of its own — plus the shared settings parser and reconnect policy every QENEX driver uses,
+/// so the driver behaves in Project Configuration and at runtime like the built-in ones.
 /// </summary>
 public class IssDriver : DriverBase, ITransportSource<string>
 {
     // Free, key-less API returning one flat JSON object with the current ISS position.
     // Be polite to the public service: do not poll faster than ~1 request per second.
     private const string Url = "https://api.wheretheiss.at/v1/satellites/25544";
+    private const int MinPeriodMs = 1000;
 
-    private int periodMs = 1000;
+    // The internet is a flaky transport: wait a few seconds before the next attempt.
+    private const int DefaultReconnectDelayMs = 5000;
+
+    private int periodMs = MinPeriodMs;
+    private ReconnectPolicy reconnect = new(DefaultReconnectDelayMs);
 
     private HttpClient? httpClient;
     private CancellationTokenSource? runCts;
@@ -42,23 +49,38 @@ public class IssDriver : DriverBase, ITransportSource<string>
 
     #region Configuration
 
-    // Shown pre-filled when the driver is added in Project Configuration.
-    public override string DefaultRawSettings => "periodMs=1000";
+    // Shown pre-filled when the driver is added in Project Configuration. The reconnect part
+    // (reconnectDelayMs / reconnectAttempts) comes from the shared template, so it reads the
+    // same as in every built-in driver: -1 = retry forever, 0 = stop at the first failure,
+    // N = give up after N consecutive failures.
+    public override string DefaultRawSettings =>
+        $"periodMs={MinPeriodMs};" + ReconnectPolicy.SettingsTemplate(DefaultReconnectDelayMs);
+
+    private static readonly string[] KnownSettings =
+    [
+        "periodMs", ReconnectPolicy.ReconnectDelayKey, ReconnectPolicy.ReconnectAttemptsKey
+    ];
 
     public override void SetConfiguration()
     {
-        // "key=value;..." — a missing or invalid key silently keeps the default.
-        foreach (var part in RawSettings.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        // The shared parser splits "key=value;..." and warns about every key it does not know —
+        // a typo in Project Configuration is reported instead of being ignored silently.
+        var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "ISS position driver");
+
+        if (settings.TryGetValue("periodMs", out var periodText))
         {
-            var pair = part.Split('=', 2, StringSplitOptions.TrimEntries);
-            if (pair.Length == 2
-                && pair[0].Equals("periodMs", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(pair[1], out var parsedPeriod))
+            if (int.TryParse(periodText, out var parsedPeriod))
             {
                 // The API asks for at most ~1 request per second, so slower is allowed, faster is not.
-                periodMs = Math.Max(parsedPeriod, 1000);
+                periodMs = Math.Max(parsedPeriod, MinPeriodMs);
+            }
+            else
+            {
+                Logger?.Log(LogLevel.Warn, $"ISS position driver: invalid periodMs '{periodText}', using {periodMs} ms.");
             }
         }
+
+        reconnect = ReconnectPolicy.Parse(settings, DefaultReconnectDelayMs, Logger, "ISS position driver");
     }
 
     #endregion
@@ -161,6 +183,7 @@ public class IssDriver : DriverBase, ITransportSource<string>
 
     private async Task RunLoopAsync(CancellationToken ct)
     {
+        string? stopMessage = null;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -171,6 +194,13 @@ public class IssDriver : DriverBase, ITransportSource<string>
                     // (latitude, longitude, altitude, velocity, ...).
                     var json = await httpClient!.GetStringAsync(Url, ct);
 
+                    // Back online after a failure: clear the failure counter and the Faulted state.
+                    reconnect.ResetAfterSuccess();
+                    if (State != CommunicationState.Running)
+                    {
+                        SetState(CommunicationState.Running);
+                    }
+
                     foreach (var protocol in Protocols)
                     {
                         if (protocol is ProtocolBase<string> textProtocol)
@@ -178,14 +208,27 @@ public class IssDriver : DriverBase, ITransportSource<string>
                             await textProtocol.AddReceivedDataToQueueAsync([json], ct);
                         }
                     }
+
+                    await Task.Delay(periodMs, ct);
                 }
                 catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
                 {
-                    // Network hiccups are normal with a public API: log it and try again next period.
-                    Logger?.Log(LogLevel.Warn, $"ISS position: request failed ({e.Message}).");
-                }
+                    // Network hiccups are normal with a public API. The reconnect policy decides
+                    // whether to keep trying (Faulted, retry after reconnectDelayMs) or to give up
+                    // (Stopped with the reason; the Start button in the driver's Properties restarts it).
+                    if (!reconnect.RegisterFailure())
+                    {
+                        stopMessage = reconnect.GiveUpMessage(e.Message);
+                        Logger?.Log(LogLevel.Error, $"ISS position driver '{Label}' {stopMessage}");
+                        break;
+                    }
 
-                await Task.Delay(periodMs, ct);
+                    Logger?.Log(reconnect.FailureLogLevel(),
+                        $"ISS position driver '{Label}' request failed ({reconnect.AttemptText}): {e.Message} "
+                        + $"Retrying in {reconnect.ReconnectDelayMs} ms.");
+                    SetState(CommunicationState.Faulted, e.Message);
+                    await Task.Delay(reconnect.ReconnectDelayMs, ct);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -196,6 +239,18 @@ public class IssDriver : DriverBase, ITransportSource<string>
         {
             Logger?.Log(LogLevel.Error, $"ISS position loop failed: {e.Message}");
             SetState(CommunicationState.Faulted, e.Message);
+            return;
+        }
+
+        if (stopMessage != null)
+        {
+            // Gave up: stop the protocols and keep the reason visible in the driver state.
+            foreach (var protocol in Protocols)
+            {
+                await protocol.StopAsync(CancellationToken.None);
+            }
+
+            SetState(CommunicationState.Stopped, stopMessage);
         }
     }
 
