@@ -6,13 +6,15 @@
 //   T3  "hold" parameter freezes the matrix data (and releasing it resumes generation)
 //   T4  matrix pending element writes are re-applied over the buffer in WriteVariableAsync
 //   T5  parameter keys are never generated over (scalar with signal="h2amp" keeps its value)
-//   T6  FZU_SeminarDemo.qproj: XmlModule.xml loads through the real mappers (presentations,
-//       conversions, events, variables incl. the matrix), all Sim variables create protocol
-//       variables and the whole set runs (17 Sim variables: 3 generated scalars, 13 params, 1 matrix)
+//   T6  Qenex_Sim_SimulData_AllSignals.qproj (the installer example, opened with the same
+//       container loader as QInsight, so the encrypted .qproj works): XmlModule.xml loads through
+//       the real mappers (presentations, conversions, events, variables incl. the matrix), all
+//       16 Sim variables create protocol variables (7 generated scalars, 8 params, 1 matrix) and
+//       the whole set runs with the init= power-on defaults applied
 
 using Qenex.QSuite.Common.CoreComm;
-using System.IO.Compression;
 using System.Xml.Serialization;
+using Qenex.QSuite.Helpers.ProjectFile;
 using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.ModuleXmlHandler;
 using Qenex.QSuite.ModuleXmlHandler.XmlStructure;
@@ -32,7 +34,7 @@ await RunTest("T2 thermal matrix: axes, data range, changing", Test2_ThermalMatr
 await RunTest("T3 hold freezes matrix", Test3_Hold);
 await RunTest("T4 matrix pending writes re-applied", Test4_PendingWrites);
 await RunTest("T5 parameters are not generated over", Test5_ParametersUntouched);
-await RunTest("T6 FZU_SeminarDemo.qproj loads and runs", Test6_DemoProject);
+await RunTest("T6 installer example Qenex_Sim_SimulData_AllSignals loads and runs", Test6_DemoProject);
 await RunTest("T7 commParam round trip keeps amp/freq/nonlin/init (no id)", Test7_CommParamRoundTrip);
 
 Console.WriteLine();
@@ -332,14 +334,18 @@ Task<(bool, string)> Test7_CommParamRoundTrip()
 async Task<(bool, string)> Test6_DemoProject()
 {
     var qproj = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
-        @"..\..\..\..\..\QInsightSetup\Examples\FZU_SeminarDemo.qproj"));
+        @"..\..\..\..\..\QInsightSetup\Examples\Qenex_Sim_SimulData_AllSignals.qproj"));
     if (!File.Exists(qproj)) return (false, $"missing {qproj}");
 
+    // Same loader as QInsight: handles both the plain zip and the encrypted container.
+    var unzip = new ProjectZip().UnzipProject(qproj);
+    if (unzip.Status != ProjectUnzipStatus.Success || !unzip.Streams.TryGetValue("XmlModule.xml", out var moduleStream))
+        return (false, $"container status={unzip.Status}, entries={string.Join(", ", unzip.Streams.Keys)}");
+
     XmlModule module;
-    using (var zip = ZipFile.OpenRead(qproj))
-    using (var stream = zip.GetEntry("XmlModule.xml")!.Open())
+    using (moduleStream)
     {
-        module = (XmlModule)new XmlSerializer(typeof(XmlModule)).Deserialize(stream)!;
+        module = (XmlModule)new XmlSerializer(typeof(XmlModule)).Deserialize(moduleStream)!;
     }
 
     var conversions = XmlComponentMapper.FromXmlConversions(module.Conversions);
@@ -364,7 +370,7 @@ async Task<(bool, string)> Test6_DemoProject()
     }
 
     var write = (IProtocolVariableWriteProtocol)protocol;
-    var writableCount = protocol.Variables.Count(write.CanWriteVariable);   // 13 params + matrix = 14
+    var writableCount = protocol.Variables.Count(write.CanWriteVariable);   // 8 params + matrix = 9
 
     // power-on defaults come from init= in the comm params (no script involved)
     ScalarVariable S(string name) => variables.OfType<ScalarVariable>().Single(v => v.Name == name);
@@ -376,18 +382,21 @@ async Task<(bool, string)> Test6_DemoProject()
     await Task.Delay(1500);
     var running = protocol.State == CommunicationState.Running;
     var initOk = Math.Abs(Raw(S("H1Amp")) - 680) < 1e-9 && Math.Abs(Raw(S("H1Freq")) - 0.5) < 1e-9
-                 && Math.Abs(Raw(S("H4Phase")) - 181) < 1e-9 && initNotified == 1;
-    var stress = await SampleRange(S("Stress"), 1100);
-    var noisy = await SampleRange(S("NoisyStep"), 300);
+                 && Math.Abs(Raw(S("Nonlin")) - 0.6) < 1e-9 && Math.Abs(Raw(S("H2Phase")) - 76) < 1e-9
+                 && Math.Abs(Raw(S("Hold"))) < 1e-9 && initNotified == 1;
+    var stress = await SampleRange(S("Stress"), 2100);   // a full 0.5 Hz period, so both peaks are seen
+    var noisy = await SampleRange(S("NoisyStepVal"), 300);
+    var walk = await SampleRange(S("Walk2Val"), 600);
     var snap = DataSnapshot(matrix!);
     await protocol.StopAsync();
 
-    var stressOk = stress.max > 600 && stress.min < -600;
-    var noisyOk = noisy.max - noisy.min > 20; // noise +-50 on the staircase
+    var stressOk = stress.max > 500 && stress.min < -500;   // 680 fundamental, harmonics partly cancel at the peaks
+    var noisyOk = noisy.max - noisy.min > 20;   // noise +-50 on the staircase
+    var walkOk = walk.max - walk.min > 0;       // the walk moved at all
     var matrixDataOk = snap.Max() > 45 && snap.Min() < 30;
-    var detail = $"vars={variables.Count}; created={created}/17; writable={writableCount}; matrix ok={matrixOk}; init ok={initOk}; running={running} ({protocol.StateMessage}); " +
-                 $"stress {stress.min:F0}..{stress.max:F0}; noisy {noisy.min:F0}..{noisy.max:F0}; matrix {snap.Min():F1}..{snap.Max():F1}";
-    return (variables.Count == 18 && created == 17 && writableCount == 14 && matrixOk && initOk && running && stressOk && noisyOk && matrixDataOk, detail);
+    var detail = $"vars={variables.Count}/17; created={created}/16; writable={writableCount}/9; matrix ok={matrixOk}; init ok={initOk}; running={running} ({protocol.StateMessage}); " +
+                 $"stress {stress.min:F0}..{stress.max:F0}; noisy {noisy.min:F0}..{noisy.max:F0}; walk2 {walk.min:F2}..{walk.max:F2}; matrix {snap.Min():F1}..{snap.Max():F1}";
+    return (variables.Count == 17 && created == 16 && writableCount == 9 && matrixOk && initOk && running && stressOk && noisyOk && walkOk && matrixDataOk, detail);
 }
 
 sealed class ConsoleLogSubscriber : ILogSubscriber
