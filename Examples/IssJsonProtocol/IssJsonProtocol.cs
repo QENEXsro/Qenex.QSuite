@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Text.Json;
 using Qenex.QSuite.Common.CoreComm;
 using Qenex.QSuite.LogSystems.LogSystem;
@@ -39,8 +39,11 @@ public class IssJsonProtocol : ProtocolBase<string>
     #region Configuration
 
     // The protocol has no protocol-level settings; everything is per-variable commParams.
+    // The shared parser still runs so that a key typed into the protocol settings is reported
+    // as unknown instead of being ignored silently.
     public override void SetConfiguration()
     {
+        SettingsParser.Parse(RawSettings, [], Logger, "ISS JSON protocol");
     }
 
     public override string CreateDefaultCommParam(IVariableBase variable, IEnumerable<IVarEvent> variableEvents)
