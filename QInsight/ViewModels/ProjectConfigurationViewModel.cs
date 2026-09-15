@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
@@ -299,10 +299,15 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             }
 
             field = value;
+            // Notify the driver change BEFORE selecting the protocol: the protocol grid rebinds its
+            // ItemsSource on this notification and resets its selection, which the TwoWay binding
+            // pushes back as SelectedProtocol = null. Selecting first and notifying afterwards left the
+            // settings box bound to the previous driver's protocol (or disabled) for every driver but
+            // the first one.
+            OnPropertyChanged();
             SelectedProtocol = field?.Protocols.FirstOrDefault();
             RefreshProtocolPluginOptions();
             ErrorMessage = string.Empty;
-            OnPropertyChanged();
             AddDriverCommand?.OnCanExecuteChanged();
             RemoveDriverCommand?.OnCanExecuteChanged();
             AddProtocolCommand?.OnCanExecuteChanged();
