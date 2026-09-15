@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Reflection;
 using Qenex.QSuite.Common.CoreComm;
 using Qenex.QSuite.LogSystems.LogSystem;
@@ -60,13 +60,13 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
     // laosstress; thermal for a matrix) or a writable parameter (nonlin, hold, h1amp..h4amp,
     // h1freq..h4freq, h1phase..h4phase; optional init= power-on default); optional
     // amp=/freq=/nonlin= tune the generator, the generation rate comes from the referenced event.
+    // There is no id: the variable identifies itself, nothing on the "device" side needs a name.
     public override string CreateDefaultCommParam(IVariableBase variable, IEnumerable<IVarEvent> variableEvents)
     {
         return string.Join(";",
             "direction=\"read\"",
             $"eventRef=\"{GetDefaultEventName(variableEvents)}\"",
-            $"signal=\"{SimulSignalCatalog.StepKey}\"",
-            $"id=\"{variable.Name}\"");
+            $"signal=\"{SimulSignalCatalog.StepKey}\"");
     }
 
     #endregion
@@ -90,7 +90,7 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
             {
                 Variable = variable,
                 IsCommunicated = true,
-                ProtocolVariableSpecification = SimulDataProtocolVariableSpecification.CreateDefault(varEvent, id)
+                ProtocolVariableSpecification = SimulDataProtocolVariableSpecification.CreateDefault(varEvent)
             };
         }
         catch (Exception e)
@@ -318,7 +318,7 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                 continue;
             }
 
-            var settings = new SimulSignalSettings(spec.Amplitude, spec.Frequency, spec.Nonlinearity, parameterProvider);
+            var settings = new SimulSignalSettings(spec.Amp, spec.Freq, spec.Nonlin, parameterProvider);
 
             switch (simulVariable.Variable)
             {
@@ -395,7 +395,7 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
         {
             if (simulVariable.ProtocolVariableSpecification is not SimulDataProtocolVariableSpecification
                 {
-                    InitialValue: { } initialValue
+                    Init: { } initialValue
                 } spec
                 || !SimulSignalCatalog.IsParameterKey(spec.Signal)
                 || simulVariable.Variable is not ScalarVariable scalar

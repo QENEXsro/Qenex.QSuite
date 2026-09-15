@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Threading.Channels;
 using Qenex.QSuite.Common.CoreComm;
 using Qenex.QSuite.LogSystems.LogSystem;
@@ -47,9 +47,10 @@ public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAware
         SettingsParser.Parse(RawSettings, [], Logger, "Virtual Variables protocol");
     }
 
+    // Nothing to configure per variable: samples are born from script writes routed by identity.
     public override string CreateDefaultCommParam(IVariableBase variable, IEnumerable<IVarEvent> variableEvents)
     {
-        return $"id=\"{variable.Name}\"";
+        return string.Empty;
     }
 
     #endregion
@@ -68,7 +69,7 @@ public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAware
 
     public override IProtocolVariable? CreateProtocolVariable(IVariableBase variable, IVarEvent variableEvent, string id)
     {
-        return CreateProtocolVariable(variable, $"id=\"{id}\"", true);
+        return CreateProtocolVariable(variable, string.Empty, true);
     }
 
     public override IProtocolVariable? CreateProtocolVariable(IVariableBase variable, IEnumerable<IVarEvent> variableEvents,

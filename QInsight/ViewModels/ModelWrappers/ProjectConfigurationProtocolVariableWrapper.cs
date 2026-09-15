@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Reflection;
 using System.Windows.Input;
@@ -33,7 +33,6 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
     private string selectedVariableEventName = string.Empty;
     private CommDirection selectedDirection = CommDirection.Read;
     private int multiplier = 1;
-    private string communicationId = string.Empty;
 
     public ProjectConfigurationProtocolVariableWrapper(
         IProtocolVariable protocolVariable,
@@ -174,23 +173,6 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
             }
 
             multiplier = value;
-            UpdateCommParamFromFields();
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(HasChanges));
-        }
-    }
-
-    public string CommunicationId
-    {
-        get => communicationId;
-        set
-        {
-            if (communicationId == value)
-            {
-                return;
-            }
-
-            communicationId = value;
             UpdateCommParamFromFields();
             OnPropertyChanged();
             OnPropertyChanged(nameof(HasChanges));
@@ -399,9 +381,6 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
                      && int.TryParse(multiplierText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedMultiplier)
             ? parsedMultiplier
             : 1;
-        communicationId = parameters.TryGetValue("id", out var id)
-            ? id
-            : string.Empty;
         additionalCommParameters = parameters
             .Where(parameter => !IsKnownCommunicationField(parameter.Key))
             .ToDictionary(parameter => parameter.Key, parameter => parameter.Value, StringComparer.OrdinalIgnoreCase);
@@ -409,7 +388,6 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
         OnPropertyChanged(nameof(SelectedVariableEventName));
         OnPropertyChanged(nameof(SelectedDirection));
         OnPropertyChanged(nameof(Multiplier));
-        OnPropertyChanged(nameof(CommunicationId));
     }
 
     private void UpdateCommParamFromFields()
@@ -425,7 +403,6 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
         }
 
         parameters.Add($"multiplier=\"{Multiplier}\"");
-        parameters.Add($"id=\"{CommunicationId}\"");
         parameters.AddRange(additionalCommParameters.Select(parameter => $"{parameter.Key}=\"{parameter.Value}\""));
         commParam = string.Join(";", parameters);
         OnPropertyChanged(nameof(CommParam));
@@ -435,8 +412,7 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
     {
         return name.Equals("direction", StringComparison.OrdinalIgnoreCase)
                || name.Equals("eventRef", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("multiplier", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("id", StringComparison.OrdinalIgnoreCase);
+               || name.Equals("multiplier", StringComparison.OrdinalIgnoreCase);
     }
 }
 

@@ -1,4 +1,4 @@
-// Headless verification of SimulDataProtocol extensions used by the FZU seminar demo:
+﻿// Headless verification of SimulDataProtocol extensions used by the FZU seminar demo:
 //   T1  writable LAOS harmonic parameters (h{n}amp/h{n}freq/h{n}phase) change the stress
 //       waveform live; strain follows h1freq; phases add up / cancel
 //   T2  thermal-field matrix: axes filled once (10 mm pitch), data cells in the expected
@@ -33,6 +33,7 @@ await RunTest("T3 hold freezes matrix", Test3_Hold);
 await RunTest("T4 matrix pending writes re-applied", Test4_PendingWrites);
 await RunTest("T5 parameters are not generated over", Test5_ParametersUntouched);
 await RunTest("T6 FZU_SeminarDemo.qproj loads and runs", Test6_DemoProject);
+await RunTest("T7 commParam round trip keeps amp/freq/nonlin/init (no id)", Test7_CommParamRoundTrip);
 
 Console.WriteLine();
 Console.WriteLine("==== SUMMARY ====");
@@ -149,7 +150,7 @@ async Task<(bool, string)> Test1_HarmonicParameters()
 
     Add(protocol, strain, events, "direction=\"read\";eventRef=\"e10\";id=\"Strain\";signal=\"laosstrain\"");
     Add(protocol, stress, events, "direction=\"read\";eventRef=\"e10\";id=\"Stress\";signal=\"laosstress\"");
-    Add(protocol, h1amp, events, "direction=\"write\";eventRef=\"e100\";id=\"H1Amp\";signal=\"h1amp\"");
+    Add(protocol, h1amp, events, "direction=\"write\";eventRef=\"e100\";signal=\"h1amp\"");
     Add(protocol, h1freq, events, "direction=\"write\";eventRef=\"e100\";id=\"H1Freq\";signal=\"h1freq\"");
     Add(protocol, h2amp, events, "direction=\"write\";eventRef=\"e100\";id=\"H2Amp\";signal=\"h2amp\"");
     Add(protocol, h2freq, events, "direction=\"write\";eventRef=\"e100\";id=\"H2Freq\";signal=\"h2freq\"");
@@ -307,6 +308,25 @@ async Task<(bool, string)> Test5_ParametersUntouched()
     var moving = r.max - r.min > 100;
     await protocol.StopAsync();
     return (stateOk && kept && moving, $"state={state} ({protocol.StateMessage}); h2amp kept={kept}; stress {r.min:F0}..{r.max:F0} moving={moving}; readParam={Raw(readParam)}");
+}
+
+// Saving a project from QInsight rewrites every commParam through ToCommParam(); the keys must
+// be the ones Create() reads, otherwise generator overrides and init= defaults vanish on reload.
+Task<(bool, string)> Test7_CommParamRoundTrip()
+{
+    var events = new List<IVarEvent> { new PeriodicVarEvent { Name = "event20ms", Period = 20, Unit = TimeUnit.Milisec } };
+    var original = "direction=\"write\";eventRef=\"event20ms\";signal=\"h1amp\";amp=\"800\";freq=\"0.5\";nonlin=\"0.6\";init=\"680\"";
+    var spec = SimulDataProtocolVariableSpecification.Create(events[0], original);
+    var written = spec.ToCommParam();
+    var reread = SimulDataProtocolVariableSpecification.Create(events[0], written);
+    var ok = written == original
+             && reread.Direction == CommDirection.Write && reread.VariableEvent?.Name == "event20ms"
+             && reread.Signal == "h1amp"
+             && reread.Amp == 800 && reread.Freq == 0.5 && reread.Nonlin == 0.6 && reread.Init == 680;
+
+    var minimal = SimulDataProtocolVariableSpecification.Create(events[0], "direction=\"read\";eventRef=\"event20ms\";signal=\"step\"").ToCommParam();
+    var minimalOk = minimal == "direction=\"read\";eventRef=\"event20ms\";signal=\"step\"";
+    return Task.FromResult((ok && minimalOk, $"written='{written}'; minimal='{minimal}'"));
 }
 
 async Task<(bool, string)> Test6_DemoProject()
