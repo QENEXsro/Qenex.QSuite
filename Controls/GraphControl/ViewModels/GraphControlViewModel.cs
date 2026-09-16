@@ -27,7 +27,7 @@ using Microsoft.Win32;
 namespace Qenex.QSuite.Controls.GraphControl.ViewModels;
 
 [DataContract]
-public class GraphControlViewModel : ControlBase, IHasMousePosition, IFileDialogAwareControl, IVariableReferenceProvider, ILogAwareControl, ISampleHistoryControl
+public class GraphControlViewModel : ControlBase, IHasMousePosition, IFileDialogAwareControl, IVariableReferenceProvider, ILogAwareControl, ISampleHistoryControl, ITimelineResetControl
 {
     #region Const
 
@@ -362,6 +362,17 @@ public class GraphControlViewModel : ControlBase, IHasMousePosition, IFileDialog
     }
 
     protected override void OnEditToRun()
+    {
+        ClearGraph(null!);
+    }
+
+    /// <summary>
+    /// Replay seek (ITimelineResetControl): same as the operator's Clear — drops the plotted
+    /// samples and the time-axis origin, so the history the replay driver re-sends up to the
+    /// new position starts a fresh timeline instead of folding into the last point (the
+    /// backward-timestamp tolerance is meant for live clock drift, not for a seek).
+    /// </summary>
+    public void ResetTimeline()
     {
         ClearGraph(null!);
     }

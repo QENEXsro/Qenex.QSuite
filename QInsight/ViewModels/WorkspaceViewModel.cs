@@ -410,6 +410,40 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 	    }
     }
 
+    /// <summary>
+    /// Replay seek: drops the samples still queued for every control (they belong to the
+    /// position before the seek) and resets the timeline of the controls that accumulate
+    /// samples (ITimelineResetControl). Must complete before the replay driver re-sends the
+    /// history up to the new position, otherwise the stale samples would land in the cleared
+    /// chart first. Runs on the UI thread — the controls' data belong to it, and the sample
+    /// pump delivers there, so no drain can interleave with the reset.
+    /// </summary>
+    public void ResetControlTimelines()
+    {
+	    var uiDispatcher = Application.Current?.Dispatcher;
+	    if (uiDispatcher != null && !uiDispatcher.CheckAccess())
+	    {
+		    uiDispatcher.Invoke(ResetControlTimelines);
+		    return;
+	    }
+
+	    ControlVariableFeed[] feeds;
+	    lock (loadedVariableSubscriptions)
+	    {
+		    feeds = loadedVariableSubscriptions.ToArray();
+	    }
+
+	    foreach (var feed in feeds)
+	    {
+		    feed.Discard();
+	    }
+
+	    foreach (var control in GetWorkspaceControls().OfType<ITimelineResetControl>())
+	    {
+		    control.ResetTimeline();
+	    }
+    }
+
     private static IVariableBase CreateVariableSnapshot(IVariableBase variable)
     {
 	    return variable switch
@@ -865,6 +899,24 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 	    }
 
 	    public int TakeDroppedSamples() => Interlocked.Exchange(ref droppedSamples, 0);
+
+	    /// <summary>
+	    /// Drops every pending sample (replay seek: they precede the new position). Not counted
+	    /// as dropped — nothing was lost, the driver re-sends the history.
+	    /// </summary>
+	    public void Discard()
+	    {
+		    Interlocked.Exchange(ref latest, null);
+		    if (history == null)
+		    {
+			    return;
+		    }
+
+		    while (history.TryDequeue(out _))
+		    {
+			    Interlocked.Decrement(ref historyCount);
+		    }
+	    }
     }
 
     /// <summary>
