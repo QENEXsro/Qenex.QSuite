@@ -2592,6 +2592,15 @@ public partial class ShellWindowModel
         }
     }
 
+    // Replay seek: every open workspace (same set as RebindWorkspaceControlVariables).
+    private void ResetWorkspaceControlTimelines()
+    {
+        foreach (var workspaceViewModel in ViewModels.OfType<WorkspaceViewModel>())
+        {
+            workspaceViewModel.ResetControlTimelines();
+        }
+    }
+
     private void SetRuntimeStartedState(bool runtimeStarted)
     {
         if (!runtimeStarted)
@@ -2792,6 +2801,11 @@ public partial class ShellWindowModel
 
         try
         {
+            // The driver re-sends the whole history up to the new position (every variable
+            // gets its value valid there), so controls with a timeline must forget the old
+            // position first — queued stale samples included — before any re-sent sample
+            // can arrive. Continuation of the Task.Delay above: still the UI thread.
+            ResetWorkspaceControlTimelines();
             await activeReplayDriver.SeekAsync(TimeSpan.FromSeconds(seconds));
         }
         catch (Exception e)

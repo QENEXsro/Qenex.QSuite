@@ -24,7 +24,7 @@ using Telerik.Windows.Controls.FileDialogs;
 namespace Qenex.QSuite.Controls.XYGraphControl.ViewModels;
 
 [DataContract]
-public class XYGraphControlViewModel : ControlBase, IFileDialogAwareControl, IVariableReferenceProvider, ILogAwareControl, ISampleHistoryControl
+public class XYGraphControlViewModel : ControlBase, IFileDialogAwareControl, IVariableReferenceProvider, ILogAwareControl, ISampleHistoryControl, ITimelineResetControl
 {
     #region Const
 
@@ -531,6 +531,17 @@ public class XYGraphControlViewModel : ControlBase, IFileDialogAwareControl, IVa
     }
 
     protected override void OnEditToRun()
+    {
+        ClearGraph(null!);
+    }
+
+    /// <summary>
+    /// Replay seek (ITimelineResetControl): same as the operator's Clear — drops the paired
+    /// points, the X pairing history and the waiting Y samples. Without it the points of the
+    /// old position would stay in the persistence window until the re-sent history passed
+    /// them again, and Y samples buffered before the seek would pair with re-sent X values.
+    /// </summary>
+    public void ResetTimeline()
     {
         ClearGraph(null!);
     }
