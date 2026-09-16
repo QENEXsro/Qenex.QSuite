@@ -164,8 +164,10 @@ public class FileDataLoggerDriver : DriverBase, IProtocolVariableSinkDriver, IDa
             SetState(CommunicationState.Disabled);
             return Task.CompletedTask;
         }
-        if (State == CommunicationState.Running) return Task.CompletedTask;
-
+        if (State == CommunicationState.Running || writerTask is { IsCompleted: false })
+        {
+            return Task.CompletedTask;
+        }
 
         if (!SinkSealValid())
         {
@@ -177,26 +179,40 @@ public class FileDataLoggerDriver : DriverBase, IProtocolVariableSinkDriver, IDa
         }
 
         SetState(CommunicationState.Starting);
+
+        // Open the log file first: an unwritable target (missing drive, no permission, locked
+        // file) is reported as a Faulted driver with the reason, the same way a transport driver
+        // reports an unopenable port, instead of throwing out of StartAsync into the module.
+        var timestampedLogFilePath = CreateTimestampedLogFilePath(logFilePath, DataLogFileName, DateTime.Now);
+        try
+        {
+            var directory = Path.GetDirectoryName(timestampedLogFilePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            logStream = new FileStream(
+                timestampedLogFilePath,
+                append ? FileMode.Append : FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read,
+                bufferSize: 4096,
+                useAsync: true);
+        }
+        catch (Exception e)
+        {
+            logStream = null;
+            var message = $"Data log file \"{timestampedLogFilePath}\" could not be opened: {e.Message}";
+            Logger?.Log(LogLevel.Error, $"Data log recorder driver: {message}", e);
+            SetState(CommunicationState.Faulted, message);
+            return Task.CompletedTask;
+        }
+
         foreach (var protocol in Protocols)
         {
             _ = protocol.StartAsync(ct);
         }
-
-        var timestampedLogFilePath = CreateTimestampedLogFilePath(logFilePath, DataLogFileName, DateTime.Now);
-        var directory = Path.GetDirectoryName(timestampedLogFilePath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        logStream = new FileStream(
-            timestampedLogFilePath,
-            append ? FileMode.Append : FileMode.Create,
-            FileAccess.Write,
-            FileShare.Read,
-            bufferSize: 4096,
-            useAsync: true);
-        
 
         exitRequested = false;
         highestBufferedTimestampUtcTicks = 0;
