@@ -2815,7 +2815,10 @@ public partial class ShellWindowModel
             }
             else
             {
-                UpdateReplayProgress(TimeSpan.Zero, TimeSpan.Zero, false, false);
+                // Stop replay: rewind the position only. The imported data log is still loaded in the
+                // replay driver, so its duration stays on the timeline until the import is cleared
+                // (ClearReplayDataLogImportState) or replaced by a new import.
+                UpdateReplayProgress(TimeSpan.Zero, TimeSpan.FromSeconds(ReplayDurationSeconds), false, false);
             }
         }
 
@@ -3096,11 +3099,18 @@ public partial class ShellWindowModel
         RibbonExportDataLogCommand.OnCanExecuteChanged();
     }
 
+    // Called whenever the current project goes away (Close, New, Open over an open project).
+    // The replay timeline belongs to the replay driver of that project, so the ribbon is
+    // detached from it and the timeline cleared; otherwise the duration of the previous
+    // project's data log would stay on screen while Replay already asks for a new Import.
     private void ClearReplayDataLogImportState()
     {
         replayDataLogFilePath = null;
         isReplayDataLogImported = false;
+        UnsubscribeReplayCompleted();
+        UpdateReplayProgress(TimeSpan.Zero, TimeSpan.Zero, isPaused: false, isDataLoaded: false);
         RibbonExportDataLogCommand.OnCanExecuteChanged();
+        RibbonCancelReplayDataLoadCommand.OnCanExecuteChanged();
     }
 
     #endregion
