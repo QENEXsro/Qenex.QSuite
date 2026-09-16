@@ -44,7 +44,6 @@ public class GraphControlViewModel : ControlBase, IHasMousePosition, IFileDialog
 
     private DateTime baseTime;
     private DateTime lastUpdateTime;
-    private bool mergingBackwardSamples;
     private int currentColorIndex;
     private Crosshair cross = null!;
     private Annotation annotation = null!;
@@ -316,31 +315,16 @@ public class GraphControlViewModel : ControlBase, IHasMousePosition, IFileDialog
             if (timestamp < lastChartVariableTimestamp
                 && (lastChartVariableTimestamp - timestamp).TotalSeconds <= BackwardTimestampToleranceSeconds)
             {
-                // A small backward step (host clock adjustment, timestamp source change)
-                // folds into the last point; only a real rewind below restarts the chart.
-                // Logged once per episode - consecutive backward samples stay silent.
-                if (!mergingBackwardSamples)
-                {
-                    mergingBackwardSamples = true;
-                    LogWarn?.Invoke(
-                        $"timestamp of '{chartVariable.Variable.Name}' stepped back by " +
-                        $"{(lastChartVariableTimestamp - timestamp).TotalMilliseconds:0} ms — merging into " +
-                        "the last point (host clock adjustment or timestamp source change).");
-                }
-
+                // A small backward step (host clock adjustment, timestamp source change,
+                // replay seek re-sending history) folds into the last point; only a real
+                // rewind below restarts the chart. Neither case is logged: it happens on
+                // every replay seek and the operator cannot act on it.
                 timestamp = lastChartVariableTimestamp;
                 xVal = chartVariable.XVal[^1];
-            }
-            else
-            {
-                mergingBackwardSamples = false;
             }
 
             if (timestamp < lastChartVariableTimestamp)
             {
-                LogInfo?.Invoke(
-                    $"time axis jumped back by {(lastChartVariableTimestamp - timestamp).TotalSeconds:0.#} s " +
-                    "— chart restarted (replay or data source restart).");
                 ClearChartData(timestamp);
                 xVal = 0;
             }

@@ -11,12 +11,19 @@ public class ProjectConfigurationDriverWrapper(IDriverBase driver, bool isNew = 
     private const string FileDataLoggerDriverName = "FileDataLoggerDriver";
     private const string FileDataReplayDriverName = "FileDataReplayDriver";
     private const string FileDataReplayDisplayLabel = "File data replay";
+    private const string ReplayFileSettingKey = "file";
     private bool originalIsEnabled = driver.IsEnabled;
     private bool isEnabled = driver.IsEnabled;
     private string originalLabel = driver.Label;
     private string label = driver.Label;
-    private string originalSettings = driver.RawSettings;
-    private string settings = driver.RawSettings;
+    // The replay driver's "file" setting is written by the Import button, not by the operator,
+    // so the editor shows the settings without it and the wrapper keeps the value aside to put
+    // it back on apply. Other drivers show their RawSettings unchanged.
+    private string hiddenReplayFile = IsFileDataReplay(driver)
+        ? SplitReplayFileSetting(driver.RawSettings).File
+        : string.Empty;
+    private string originalSettings = ToDisplayedSettings(driver);
+    private string settings = ToDisplayedSettings(driver);
 
     public IDriverBase Driver => driver;
     public bool IsNew => isNew;
@@ -138,8 +145,24 @@ public class ProjectConfigurationDriverWrapper(IDriverBase driver, bool isNew = 
 
         if (settings != originalSettings)
         {
+            var displayedSettings = settings;
+            var rawSettings = settings;
+            if (IsFileDataReplayDriver)
+            {
+                // A "file" typed into the editor by hand (tests, headless projects) wins over the
+                // hidden one; either way the stored text carries the file and the editor does not.
+                var (typedFile, rest) = SplitReplayFileSetting(settings);
+                if (!string.IsNullOrWhiteSpace(typedFile))
+                {
+                    hiddenReplayFile = typedFile;
+                }
+
+                displayedSettings = rest;
+                rawSettings = ComposeReplayRawSettings(hiddenReplayFile, rest);
+            }
+
             var previousSettings = driver.RawSettings;
-            driver.RawSettings = settings;
+            driver.RawSettings = rawSettings;
             try
             {
                 driver.SetConfiguration();
@@ -150,7 +173,13 @@ public class ProjectConfigurationDriverWrapper(IDriverBase driver, bool isNew = 
                 driver.SetConfiguration();
                 throw;
             }
-            originalSettings = settings;
+
+            originalSettings = displayedSettings;
+            if (settings != displayedSettings)
+            {
+                settings = displayedSettings;
+                OnPropertyChanged(nameof(Settings));
+            }
         }
 
         OnPropertyChanged(nameof(HasChanges));
@@ -179,9 +208,50 @@ public class ProjectConfigurationDriverWrapper(IDriverBase driver, bool isNew = 
         OnPropertyChanged(nameof(HasChanges));
     }
 
-    private bool IsFileDataReplayDriver =>
-        driver.Specification.Name.Equals(FileDataReplayDriverName, StringComparison.OrdinalIgnoreCase);
+    private bool IsFileDataReplayDriver => IsFileDataReplay(driver);
 
     private bool IsFileDataLoggerDriver =>
         driver.Specification.Name.Equals(FileDataLoggerDriverName, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsFileDataReplay(IDriverBase driver) =>
+        driver.Specification.Name.Equals(FileDataReplayDriverName, StringComparison.OrdinalIgnoreCase);
+
+    private static string ToDisplayedSettings(IDriverBase driver) =>
+        IsFileDataReplay(driver)
+            ? SplitReplayFileSetting(driver.RawSettings).Remaining
+            : driver.RawSettings;
+
+    // Splits "key=value;key=value" text into the value of the "file" entry (last one wins, as in
+    // SettingsParser) and the text with every "file" entry removed. Only ';' separates entries,
+    // so a value may contain '\' and ':' freely; the other entries are kept verbatim.
+    private static (string File, string Remaining) SplitReplayFileSetting(string rawSettings)
+    {
+        var file = string.Empty;
+        var rest = new List<string>();
+        foreach (var entry in (rawSettings ?? string.Empty).Split(';'))
+        {
+            var pair = entry.Split('=', 2);
+            if (pair.Length == 2 && pair[0].Trim().Equals(ReplayFileSettingKey, StringComparison.OrdinalIgnoreCase))
+            {
+                file = pair[1].Trim();
+                continue;
+            }
+
+            rest.Add(entry);
+        }
+
+        return (file, string.Join(';', rest).Trim(';'));
+    }
+
+    private static string ComposeReplayRawSettings(string file, string rest)
+    {
+        if (string.IsNullOrWhiteSpace(file))
+        {
+            return rest;
+        }
+
+        return string.IsNullOrWhiteSpace(rest)
+            ? $"{ReplayFileSettingKey}={file}"
+            : $"{ReplayFileSettingKey}={file};{rest}";
+    }
 }
