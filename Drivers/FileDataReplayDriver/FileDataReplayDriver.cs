@@ -91,7 +91,8 @@ public class FileDataReplayDriver : DriverBase, IReplayDriver, IDataLogCsvExport
         }
     }
 
-    public override string DefaultRawSettings => "file=DataLogs\\values.qilog;mode=realtime;speed=1;loop=false";
+    // No "file" in the template: the Import button writes it, the operator only tunes playback.
+    public override string DefaultRawSettings => "mode=realtime;speed=1;loop=false";
 
     private static readonly string[] KnownSettings = ["file", "directory", "mode", "speed", "loop"];
 
@@ -205,6 +206,18 @@ public class FileDataReplayDriver : DriverBase, IReplayDriver, IDataLogCsvExport
         }
 
         SetState(CommunicationState.Starting);
+
+        // A missing log file (no Import yet, deleted or unplugged disk) is reported as a Faulted
+        // driver with the reason, the same way the logger reports an unwritable file, instead of
+        // an empty replay that "completes" at once.
+        if (!File.Exists(logFilePath))
+        {
+            var message = $"Replay log file \"{logFilePath}\" not found. Import a data log before starting replay.";
+            Logger?.Log(LogLevel.Error, $"Data log replay driver: {message}");
+            SetState(CommunicationState.Faulted, message);
+            return Task.CompletedTask;
+        }
+
         foreach (var protocol in Protocols)
         {
             _ = protocol.StartAsync(ct);
