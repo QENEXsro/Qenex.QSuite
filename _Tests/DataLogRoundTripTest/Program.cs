@@ -16,6 +16,9 @@
 //       known variables replay completely
 //   T9  a not-running replay protocol drops records WITH a warning
 //   T10 an out-of-order file replays without losing records
+//   T11 settings: unknown keys and invalid values are reported (both drivers, both
+//       protocols), re-applied settings fall back to defaults, empty comm-param templates
+//   T12 logger: an unwritable log path leaves the driver Faulted with a message, no exception
 
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -47,6 +50,8 @@ await RunTest("T7 replay: corrupted record is skipped, rest of file survives", T
 await RunTest("T8 replay: unknown variable is skipped with a warning", Test8_UnknownVariable);
 await RunTest("T9 replay: not-running protocol drops with a warning", Test9_DisabledProtocol);
 await RunTest("T10 replay: out-of-order file loses nothing", Test10_OutOfOrderFile);
+await RunTest("T11 settings: unknown keys, invalid values, defaults, comm-param templates", Test11_Settings);
+await RunTest("T12 logger: unwritable log path -> Faulted with message", Test12_UnwritableLogPath);
 
 Console.WriteLine();
 Console.WriteLine("==== SUMMARY ====");
@@ -462,6 +467,115 @@ async Task<(bool, string)> Test10_OutOfOrderFile()
     return (finished && nothingLost,
         $"records={count} (1 out-of-order straggler), replayed={received.Count}, nothing lost={nothingLost}, " +
         $"replay log={log.Summary()}");
+}
+
+async Task<(bool, string)> Test11_Settings()
+{
+    var dir = Path.Combine(workRoot, "t11");
+    Directory.CreateDirectory(dir);
+    var failures = new List<string>();
+
+    static bool HasWarn(TestLogger log, params string[] fragments) => log.Messages.Any(m =>
+        m.Level == LogLevel.Warn && fragments.All(f => m.Message.Contains(f, StringComparison.OrdinalIgnoreCase)));
+
+    // Logger driver: unknown key and invalid bool are both reported, the driver keeps working.
+    var loggerLog = new TestLogger();
+    var logger = new FileDataLoggerDriver
+    {
+        Logger = loggerLog,
+        RawSettings = $"file=\"{dir}\";append=maybe;flushOnWrte=true"
+    };
+    logger.SetConfiguration();
+    if (!HasWarn(loggerLog, "unknown setting", "flushOnWrte")) failures.Add("logger: unknown key not reported");
+    if (!HasWarn(loggerLog, "invalid append")) failures.Add("logger: invalid append not reported");
+
+    // Replay driver: unknown key and invalid speed are reported.
+    var replayLog = new TestLogger();
+    var replay = new FileDataReplayDriver
+    {
+        Logger = replayLog,
+        RawSettings = $"file=\"{Path.Combine(dir, "x.qilog")}\";speed=fast;mode=immediate;loop=true;bogus=1"
+    };
+    replay.SetConfiguration();
+    if (!HasWarn(replayLog, "unknown setting", "bogus")) failures.Add("replay: unknown key not reported");
+    if (!HasWarn(replayLog, "invalid speed")) failures.Add("replay: invalid speed not reported");
+
+    // Re-applying settings without mode/loop must fall back to the defaults (realtime, no loop),
+    // not keep the previously applied values. Observed through behaviour (the plugin assemblies
+    // are obfuscated, private fields are not reachable by reflection): after the reset a 1.9 s
+    // recording must finish (loop=false) and must take about its recorded time (realtime).
+    const int resetCount = 20;
+    var resetFile = Path.Combine(dir, "reset.qilog");
+    var baseTicks = new DateTime(2026, 9, 16, 10, 0, 0, DateTimeKind.Utc).Ticks;
+    await WriteLogFileDirectly(resetFile, Enumerable.Range(0, resetCount)
+        .Select(i => IntRecord(1, "Sig1", baseTicks + i * TimeSpan.TicksPerMillisecond * 100, i)));
+    var (resetDriver, _, _, resetReceived) = CreateReplay(resetFile, "immediate", true, IntVariable(1, "Sig1"));
+    resetDriver.RawSettings = $"file=\"{resetFile}\";mode=immediate;loop=true";
+    resetDriver.SetConfiguration();
+    resetDriver.RawSettings = $"file=\"{resetFile}\"";
+    resetDriver.SetConfiguration();
+    var stopwatch = Stopwatch.StartNew();
+    var resetFinished = await RunReplayToCompletion(resetDriver, TimeSpan.FromSeconds(30));
+    stopwatch.Stop();
+    if (!resetFinished) failures.Add("replay: loop did not reset to false (replay never completed)");
+    if (resetReceived.Count != resetCount) failures.Add($"replay: after reset replayed {resetReceived.Count}/{resetCount}");
+    if (stopwatch.Elapsed < TimeSpan.FromSeconds(1.5)) failures.Add($"replay: mode did not reset to realtime (took {stopwatch.Elapsed.TotalSeconds:F1} s)");
+
+    // Both protocols: no settings of their own -> a stray key is reported as unknown.
+    var passLog = new TestLogger();
+    var pass = new PassThroughProtocol { Logger = passLog, RawSettings = "foo=1" };
+    pass.SetConfiguration();
+    if (!HasWarn(passLog, "unknown setting", "foo")) failures.Add("pass-through: unknown key not reported");
+
+    var replayProtocolLog = new TestLogger();
+    var replayProtocol = new DataLogReplayProtocol { Logger = replayProtocolLog, RawSettings = "foo=1" };
+    replayProtocol.SetConfiguration();
+    if (!HasWarn(replayProtocolLog, "unknown setting", "foo")) failures.Add("replay protocol: unknown key not reported");
+
+    // Empty settings stay silent.
+    var quietLog = new TestLogger();
+    var quiet = new PassThroughProtocol { Logger = quietLog, RawSettings = string.Empty };
+    quiet.SetConfiguration();
+    if (quietLog.Messages.Count > 0) failures.Add("pass-through: empty settings produced a message");
+
+    // No per-variable parameters -> empty comm-param templates.
+    var variable = IntVariable(1, "Sig1");
+    if (pass.CreateDefaultCommParam(variable, []) != string.Empty) failures.Add("pass-through: comm-param template not empty");
+    if (replayProtocol.CreateDefaultCommParam(variable, []) != string.Empty) failures.Add("replay protocol: comm-param template not empty");
+
+    return (failures.Count == 0,
+        failures.Count == 0 ? "all settings diagnostics present, defaults restored, templates empty" : string.Join("; ", failures));
+}
+
+async Task<(bool, string)> Test12_UnwritableLogPath()
+{
+    var dir = Path.Combine(workRoot, "t12");
+    Directory.CreateDirectory(dir);
+    // A plain file where the log directory should be -> Directory.CreateDirectory fails.
+    var blocker = Path.Combine(dir, "blocker");
+    await File.WriteAllTextAsync(blocker, "not a directory");
+
+    var variable = IntVariable(1, "Sig1");
+    var (driver, _, log) = CreateLogger(Path.Combine(blocker, "Logs"), "t12", variable);
+
+    Exception? thrown = null;
+    try
+    {
+        await driver.StartAsync();
+    }
+    catch (Exception e)
+    {
+        thrown = e;
+    }
+
+    var stateAfterStart = driver.State;
+    var faulted = stateAfterStart == CommunicationState.Faulted;
+    var hasMessage = !string.IsNullOrWhiteSpace(driver.StateMessage);
+    var errorLogged = log.Messages.Any(m => m.Level == LogLevel.Error && m.Message.Contains("could not be opened", StringComparison.OrdinalIgnoreCase));
+    await driver.StopAsync();
+
+    return (thrown == null && faulted && hasMessage && errorLogged,
+        $"thrown={thrown?.GetType().Name ?? "none"}, state after start={stateAfterStart}, message={(hasMessage ? "yes" : "no")}, error logged={errorLogged}");
 }
 
 // ---------------------------------------------------------------- test logger

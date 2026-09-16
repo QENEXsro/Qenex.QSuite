@@ -97,6 +97,13 @@ public class FileDataReplayDriver : DriverBase, IReplayDriver, IDataLogCsvExport
 
     public override void SetConfiguration()
     {
+        // Start from the defaults every time, so a key removed from the settings text falls back
+        // to its default instead of keeping the previously applied value.
+        logFilePath = Path.Combine(DriverEnvironment.DataRootDirectory, "DataLogs", "values.qilog");
+        loop = false;
+        speed = 1.0;
+        replayMode = ReplayMode.Realtime;
+
         var settings = SettingsParser.Parse(RawSettings, KnownSettings, Logger, "Data log replay driver");
         if (settings.TryGetValue("file", out var configuredFile) && !string.IsNullOrWhiteSpace(configuredFile))
         {
@@ -187,6 +194,13 @@ public class FileDataReplayDriver : DriverBase, IReplayDriver, IDataLogCsvExport
         if (!IsEnabled)
         {
             SetState(CommunicationState.Disabled);
+            return Task.CompletedTask;
+        }
+
+        // Guard against a second start while the replay loop is still alive (same rule as the
+        // transport drivers): a second loop would publish every record twice.
+        if (State == CommunicationState.Running || replayTask is { IsCompleted: false })
+        {
             return Task.CompletedTask;
         }
 
@@ -799,46 +813,6 @@ public class FileDataReplayDriver : DriverBase, IReplayDriver, IDataLogCsvExport
         return timingState.BaseTimestampUtcTicks + elapsedReplayTicks;
     }
 
-    private async Task<bool> DelayBeforeReplayAsync(
-        long previousTimestampUtcTicks,
-        long currentTimestampUtcTicks,
-        int seekVersion,
-        CancellationToken ct)
-    {
-        if (replayMode == ReplayMode.Immediate)
-        {
-            return await WaitWhilePausedAsync(seekVersion, ct);
-        }
-
-        var ticks = currentTimestampUtcTicks - previousTimestampUtcTicks;
-        if (ticks <= 0)
-        {
-            return await WaitWhilePausedAsync(seekVersion, ct);
-        }
-
-        var remainingDelay = TimeSpan.FromTicks((long)(ticks / speed));
-        while (remainingDelay > TimeSpan.Zero)
-        {
-            if (!await WaitWhilePausedAsync(seekVersion, ct))
-            {
-                return false;
-            }
-
-            if (!IsCurrentSeekVersion(seekVersion))
-            {
-                return false;
-            }
-
-            var delay = remainingDelay > TimeSpan.FromMilliseconds(50)
-                ? TimeSpan.FromMilliseconds(50)
-                : remainingDelay;
-            await Task.Delay(delay);
-            remainingDelay -= delay;
-        }
-
-        return !ct.IsCancellationRequested && IsCurrentSeekVersion(seekVersion);
-    }
-
     private async Task<bool> WaitWhilePausedAsync(int seekVersion, CancellationToken ct)
     {
         while (true)
@@ -886,11 +860,6 @@ public class FileDataReplayDriver : DriverBase, IReplayDriver, IDataLogCsvExport
         }
 
         return false;
-    }
-
-    private async Task PublishRecordAsync(DataLogRecord record, CancellationToken ct)
-    {
-        await PublishRecordsAsync([record], ct);
     }
 
     private async Task PublishRecordsAsync(IEnumerable<DataLogRecord> records, CancellationToken ct)

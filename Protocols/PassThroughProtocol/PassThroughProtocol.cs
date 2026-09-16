@@ -23,8 +23,18 @@ public class PassThroughProtocol : ProtocolBase<IProtocolVariable>, IProtocolVar
         };
     }
 
+    // The protocol has no settings of its own; the shared parser reports a stray key as unknown.
     public override void SetConfiguration()
     {
+        SettingsParser.Parse(RawSettings, [], Logger, "Data log pass-through protocol");
+    }
+
+    // Logged variables carry no per-variable parameters: the driver records every variable the
+    // protocol holds, so the template is empty (the generic direction/eventRef/id keys would be
+    // meaningless here).
+    public override string CreateDefaultCommParam(IVariableBase variable, IEnumerable<IVarEvent> variableEvents)
+    {
+        return string.Empty;
     }
 
     public override IProtocolVariable? CreateProtocolVariable(IVariableBase variable, string commParams, bool isCommunicated)
