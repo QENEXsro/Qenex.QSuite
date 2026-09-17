@@ -1,4 +1,4 @@
-#Requires -Version 7
+﻿#Requires -Version 7
 <#
 .SYNOPSIS
     Signs QENEX release artifacts with the company code-signing certificate.
@@ -6,7 +6,9 @@
 .DESCRIPTION
     Uses the QENEX s.r.o. code-signing certificate stored on the YubiKey
     (slot 9a, exposed to Windows via the Yubico minidriver). The YubiKey
-    must be plugged in; Windows asks for the PIV PIN on the first signature.
+    must be plugged in. All files are signed by ONE signtool process, so Windows
+    asks for the PIV PIN once per run (the PIN is cached per process; one
+    signtool call per file would prompt for every file).
     Every signature gets an SSL.com timestamp so it outlives the certificate.
 
 .EXAMPLE
@@ -40,7 +42,7 @@ if (-not (Test-Path "Cert:\CurrentUser\My\$Thumbprint")) {
 $files = $Path | ForEach-Object { Get-Item $_ } | Where-Object { -not $_.PSIsContainer }
 if (-not $files) { throw "No files matched: $Path" }
 
-$signed = 0
+$toSign  = [System.Collections.Generic.List[string]]::new()
 $skipped = 0
 foreach ($file in $files) {
     if (-not $Force) {
@@ -51,15 +53,22 @@ foreach ($file in $files) {
             continue
         }
     }
-
-    & $signtool.FullName sign /sha1 $Thumbprint /fd sha256 /tr $TimestampUrl /td sha256 $file.FullName
-    if ($LASTEXITCODE -ne 0) { throw "Signing failed: $($file.FullName)" }
-
-    & $signtool.FullName verify /pa /q $file.FullName
-    if ($LASTEXITCODE -ne 0) { throw "Signature verification failed: $($file.FullName)" }
-
-    Write-Host "OK    $($file.FullName)" -ForegroundColor Green
-    $signed++
+    $toSign.Add($file.FullName)
 }
+
+if ($toSign.Count -gt 0) {
+    # One signtool process for every file: a single PIN prompt. signtool signs the
+    # files one after another and stops at the first failure.
+    $signArgs = @('sign', '/sha1', $Thumbprint, '/fd', 'sha256', '/tr', $TimestampUrl, '/td', 'sha256') + $toSign.ToArray()
+    & $signtool.FullName @signArgs
+    if ($LASTEXITCODE -ne 0) { throw "Signing failed (see signtool output above)" }
+
+    foreach ($f in $toSign) {
+        & $signtool.FullName verify /pa /q $f
+        if ($LASTEXITCODE -ne 0) { throw "Signature verification failed: $f" }
+        Write-Host "OK    $f" -ForegroundColor Green
+    }
+}
+$signed = $toSign.Count
 
 Write-Host "Signed $signed file(s), skipped $skipped." -ForegroundColor Cyan
