@@ -66,8 +66,8 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "(c) ${APP_PUBLISHER}"
 !define MUI_ABORTWARNING
 
 ; Stranky instalace: uvitani -> licence -> volba cesty -> instalace -> dokonceni
-; Licence = QENEX Software License Agreement v1.0 (EN/CZ dle zvoleneho jazyka instalatoru);
-; zdroj textu: QenexAi\Standa\KnowledgeBase\Legal\*.txt, RTF generovano z nej (nemenit rucne).
+; Licence = QENEX Software License Agreement v1.1 (EN/CZ dle zvoleneho jazyka instalatoru);
+; zdroj textu: QenexAi\Standa\KnowledgeBase\Legal\*.txt, RTF generovano z nej skriptem eula_to_rtf.py (nemenit rucne).
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "$(LicenseFile)"
 !insertmacro MUI_PAGE_DIRECTORY
