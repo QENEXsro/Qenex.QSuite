@@ -22,7 +22,13 @@ public class ScriptingContext
     private readonly List<Task> periodicScriptTasks = [];
     private readonly object manualRunLock = new();
     private readonly Dictionary<IScriptBase, CancellationTokenSource> manualRunSources = [];
-    private static readonly TimeSpan ManualStopGracePeriod = TimeSpan.FromSeconds(2);
+    /// <summary>
+    /// Upper bound on how long a script execution may keep running after a stop request before it
+    /// is written off as hung. Shared by the Manual-script Stop button and the session stop
+    /// (Disconnect). It is a maximum, not a delay: the stop continues the moment the running
+    /// executions finish, and nothing is waited for when no execution is running.
+    /// </summary>
+    private static readonly TimeSpan StopGracePeriod = TimeSpan.FromSeconds(2);
     private readonly object executionStateLock = new();
     private readonly object onValueChangedStateLock = new();
     private readonly object scriptOverloadStateLock = new();
@@ -32,7 +38,11 @@ public class ScriptingContext
     private readonly Dictionary<OnValueChangedScriptTrigger, OnValueChangedTriggerRuntimeState> onValueChangedTriggerStates = [];
     private readonly Dictionary<string, ScriptCallOverloadState> scriptOverloadStates = [];
     private CancellationTokenSource activeExecutionCts = new();
-    private bool isStopping;
+    // Completed when the last reserved execution releases its slot while the context is stopping;
+    // created lazily by the stop path, guarded by executionStateLock.
+    private TaskCompletionSource? scheduledExecutionsDrained;
+    private volatile bool isStopping;
+    private long stopRequestedTimestamp;
     private bool suppressLateExecutionOutput;
     private static readonly object pythonInitLock = new();
     private static bool pythonRuntimeInitialized;
@@ -273,6 +283,7 @@ if "__qenex_interactive_console" not in globals():
         }
 
         RequestStop();
+        await WaitForRunningExecutionsAsync();
         await StopPeriodicScriptsAsync();
         if (!HasAbandonedExecutions)
         {
@@ -291,13 +302,74 @@ if "__qenex_interactive_console" not in globals():
         await RunPythonFactoryActionAsync(DisposeSharedScope, "disposing Python shared scope", StopWaitTimeout, ct);
     }
 
+    /// <summary>
+    /// Enters the stopping state: no new execution is scheduled (periodic timers are cancelled,
+    /// running Manual scripts receive their stop token as if the user pressed Stop), but executions
+    /// already running are left alone so they can finish normally. <see cref="DisposeSharedScopeAsync"/>
+    /// then waits for them (bounded by <see cref="StopGracePeriod"/>, measured from this call) and
+    /// hard-interrupts only what is still running afterwards.
+    /// </summary>
     public void RequestStop()
     {
+        if (isStopping)
+        {
+            return;
+        }
+
+        stopRequestedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         isStopping = true;
+        periodicScriptsCts?.Cancel();
+        CancelManualScriptRuns();
+    }
+
+    /// <summary>
+    /// Waits for the executions that were running at the stop request to finish on their own,
+    /// for at most the remainder of <see cref="StopGracePeriod"/>. Returns immediately when nothing
+    /// is running. Whatever is still running afterwards is marked as interrupted (abandoning the
+    /// context) and its stop token is raised so a cooperative script ends at its next line.
+    /// </summary>
+    private async Task WaitForRunningExecutionsAsync()
+    {
+        var drainedTask = GetScheduledExecutionsDrainedTask();
+        if (!drainedTask.IsCompleted)
+        {
+            var remainingGrace = StopGracePeriod - System.Diagnostics.Stopwatch.GetElapsedTime(stopRequestedTimestamp);
+            if (remainingGrace > TimeSpan.Zero)
+            {
+                await WaitForTaskCompletionAsync(drainedTask, remainingGrace, CancellationToken.None);
+            }
+        }
+
         MarkScheduledExecutionsInterruptedOnStop();
         if (!activeExecutionCts.IsCancellationRequested)
         {
-            activeExecutionCts.Cancel();
+            await activeExecutionCts.CancelAsync();
+        }
+    }
+
+    private void CancelManualScriptRuns()
+    {
+        List<CancellationTokenSource> runSources;
+        lock (manualRunLock)
+        {
+            if (manualRunSources.Count == 0)
+            {
+                return;
+            }
+
+            runSources = manualRunSources.Values.ToList();
+        }
+
+        foreach (var runCts in runSources)
+        {
+            try
+            {
+                runCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The run finished between the snapshot and the cancel; nothing to stop.
+            }
         }
     }
 
@@ -483,7 +555,7 @@ if "__qenex_interactive_console" not in globals():
                 script,
                 GetScriptExecutionOptions(script),
                 runCts.Token,
-                cancellationGracePeriod: ManualStopGracePeriod);
+                cancellationGracePeriod: StopGracePeriod);
             if (!executed)
             {
                 logger?.Log(LogLevel.Warn, $"Manual script \"{script.FileName}\" was not executed (already running or the execution was cancelled).");
@@ -592,8 +664,10 @@ if "__qenex_interactive_console" not in globals():
             return false;
         }
 
-        var executionTask = pythonFactory.StartNew(() => ExecuteScript(script, beforeExecute, linkedCts.Token), linkedCts.Token);
-        ReleaseScriptExecutionWhenCompleted(executionTask, script);
+        // The task is queued without a cancellation token on purpose: ExecuteScript always runs
+        // (it bails out on a cancelled token itself) so its finally block releases the reservation
+        // taken above. A task cancelled before it started would keep the reservation forever.
+        var executionTask = pythonFactory.StartNew(() => ExecuteScript(script, beforeExecute, linkedCts.Token));
         var cancellationTask = Task.Delay(Timeout.InfiniteTimeSpan, linkedCts.Token);
         Task completedTask;
 
@@ -641,11 +715,23 @@ if "__qenex_interactive_console" not in globals():
 
     private void ExecuteScript(IScriptBase script, Action? beforeExecute = null, CancellationToken ct = default)
     {
-        if (!CanExecuteScript(script))
+        try
         {
-            return;
-        }
+            if (ct.IsCancellationRequested || !CanExecuteScript(script))
+            {
+                return;
+            }
 
+            ExecuteReservedScript(script, beforeExecute, ct);
+        }
+        finally
+        {
+            ReleaseScriptExecution(script);
+        }
+    }
+
+    private void ExecuteReservedScript(IScriptBase script, Action? beforeExecute, CancellationToken ct)
+    {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         script.RunState = ScriptRunState.Running;
 
@@ -1051,7 +1137,9 @@ if "__qenex_interactive_console" not in globals():
                     continue;
                 }
 
-                var executed = await ExecuteScriptAsync(script, GetScriptExecutionOptions(script), ct);
+                // The loop token only stops the timer. The execution itself is not linked to it so a
+                // script caught mid-run by the stop request finishes normally within the stop grace.
+                var executed = await ExecuteScriptAsync(script, GetScriptExecutionOptions(script));
                 if (executed)
                 {
                     UpdateScriptOverloadGuard(
@@ -1145,6 +1233,11 @@ if "__qenex_interactive_console" not in globals():
 
         isStopping = false;
         suppressLateExecutionOutput = false;
+        lock (executionStateLock)
+        {
+            scheduledExecutionsDrained = null;
+        }
+
         if (!activeExecutionCts.IsCancellationRequested)
         {
             return;
@@ -1232,19 +1325,35 @@ if "__qenex_interactive_console" not in globals():
         }
     }
 
-    private void ReleaseScriptExecutionWhenCompleted(Task task, IScriptBase script)
+    private void ReleaseScriptExecution(IScriptBase script)
     {
-        _ = task.ContinueWith(
-            _ =>
+        TaskCompletionSource? drainedSignal = null;
+        lock (executionStateLock)
+        {
+            scheduledScripts.Remove(script);
+            if (scheduledScripts.Count == 0 && scheduledExecutionsDrained != null)
             {
-                lock (executionStateLock)
-                {
-                    scheduledScripts.Remove(script);
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+                drainedSignal = scheduledExecutionsDrained;
+                scheduledExecutionsDrained = null;
+            }
+        }
+
+        drainedSignal?.TrySetResult();
+    }
+
+    /// <summary>Task that completes once no reserved execution is left; already completed when none is running.</summary>
+    private Task GetScheduledExecutionsDrainedTask()
+    {
+        lock (executionStateLock)
+        {
+            if (scheduledScripts.Count == 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            scheduledExecutionsDrained ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return scheduledExecutionsDrained.Task;
+        }
     }
 
     private bool ShouldSuppressScriptResult(IScriptBase script)
@@ -1300,7 +1409,7 @@ if "__qenex_interactive_console" not in globals():
         }
 
         DisableOutputWriters();
-        logger?.Log(LogLevel.Warn, $"Scripting context stopped with {scriptsToNotify.Count} active script execution(s); abandoning context.");
+        logger?.Log(LogLevel.Warn, $"Scripting context stopped with {scriptsToNotify.Count} script execution(s) still running after {StopGracePeriod.TotalMilliseconds:0} ms grace period ({string.Join(", ", scriptsToNotify.Select(s => $"\"{s.FileName}\""))}); abandoning context.");
         foreach (var script in scriptsToNotify)
         {
             OnScriptExecuted(script);
