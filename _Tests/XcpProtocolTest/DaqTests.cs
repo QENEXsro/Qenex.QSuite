@@ -307,7 +307,7 @@ internal static class DaqTests
         var mapper = new XcpDaqTimestampMapper(timestampSize: 4, tickSeconds: 1e-6, listCount: 1);
 
         // 100 Hz for 10 simulated minutes; the slave believes in exact 10 ms cycles while
-        // 1.7 % less wall time passes (measured live on the Nucleo H743ZI2 board).
+        // 1.7 % less wall time passes (measured live on the Nucleo board).
         var previous = DateTime.MinValue;
         var mapped = DateTime.MinValue;
         double maxErrorSeconds = 0;
