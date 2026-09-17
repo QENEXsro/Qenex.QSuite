@@ -2,6 +2,8 @@
 ; Kompilace: makensis.exe QInsightSetup.nsi
 ; Vyzaduje predchozi Release build solution:
 ;   dotnet build ..\Qenex.QSuite.sln -c Release
+; a rozbaleny balicek QFW XCP SDK (Prepare-Sdk.ps1 rozbali a overi zip z Release):
+;   pwsh .\Prepare-Sdk.ps1
 
 Unicode true
 ManifestDPIAware true
@@ -26,6 +28,21 @@ SetCompressor /SOLID lzma
 
 !define UNINST_KEY      "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
+; QFW XCP SDK bundled with QInsight (source package, unpacked into $INSTDIR\SDK).
+; SDK_VERSION is the only place to change when a new SDK is released; the zip
+; D:\Projects\Qenex\Release\qfw-xcp-sdk\qfw-xcp-sdk-<ver>.zip is unpacked and
+; verified (sha256 + MANIFEST.json) by Prepare-Sdk.ps1 into SDK_DIR.
+!define SDK_VERSION     "1.0.0"
+!define SDK_NAME        "qfw-xcp-sdk-${SDK_VERSION}"
+!define SDK_RELEASE_DIR "D:\Projects\Qenex\Release\qfw-xcp-sdk"
+!define SDK_DIR         "${SDK_RELEASE_DIR}\unpacked\${SDK_NAME}"
+!define SDK_GUIDE_URL_EN "https://qinsight.qenex.net/device-sdk/integration-tcp/"
+!define SDK_GUIDE_URL_CS "https://qinsight.qenex.net/cs/device-sdk/integration-tcp/"
+
+!if ! /FileExists "${SDK_DIR}\MANIFEST.json"
+	!error "QFW XCP SDK ${SDK_VERSION} is not unpacked at ${SDK_DIR} - run Prepare-Sdk.ps1 first"
+!endif
+
 Name "${APP_NAME}"
 OutFile "D:\Projects\Qenex\Release\QInsight\QInsight-Setup-${APP_VERSION}.exe"
 BrandingText "${APP_PUBLISHER}"
@@ -45,6 +62,7 @@ VIAddVersionKey /LANG=0 "FileDescription" "${APP_NAME} Setup"
 VIAddVersionKey /LANG=0 "FileVersion" "${APP_VERSION}.0"
 VIAddVersionKey /LANG=0 "ProductVersion" "${APP_VERSION}.0"
 VIAddVersionKey /LANG=0 "LegalCopyright" "(c) ${APP_PUBLISHER}"
+VIAddVersionKey /LANG=0 "Comments" "Includes QFW XCP SDK ${SDK_VERSION}"
 
 ;--------------------------------
 ; Modern UI 2
@@ -103,8 +121,16 @@ LangString CreateDesktopSC ${LANG_CZECH}   "Vytvořit zástupce na ploše"
 LangString DotNetMissing ${LANG_ENGLISH} "QInsight requires the .NET Desktop Runtime 10 (x64), which does not appear to be installed.$\r$\nDo you want to open the download page now?$\r$\n$\r$\nYou can continue with the installation, but QInsight will not start until the runtime is installed."
 LangString DotNetMissing ${LANG_CZECH}   "QInsight vyžaduje .NET Desktop Runtime 10 (x64), který zřejmě není nainstalován.$\r$\nChcete nyní otevřít stránku pro jeho stažení?$\r$\n$\r$\nV instalaci lze pokračovat, ale QInsight se bez nainstalovaného runtime nespustí."
 
-LangString RemoveUserData ${LANG_ENGLISH} "Do you also want to remove the QInsight user settings, layouts and data logs?$\r$\n$\r$\n$LOCALAPPDATA\Qenex\QInsight$\r$\n$\r$\nChoose No to keep them for a future installation."
-LangString RemoveUserData ${LANG_CZECH}   "Chcete odstranit také uživatelská nastavení, rozložení oken a datové logy QInsight?$\r$\n$\r$\n$LOCALAPPDATA\Qenex\QInsight$\r$\n$\r$\nVolbou Ne je ponecháte pro případnou budoucí instalaci."
+; Start menu entries for the bundled SDK (folder + online integration guide by language)
+LangString SdkFolderSC ${LANG_ENGLISH} "QFW XCP SDK folder"
+LangString SdkFolderSC ${LANG_CZECH}   "Složka QFW XCP SDK"
+LangString SdkGuideSC  ${LANG_ENGLISH} "QFW XCP SDK - Integration guide"
+LangString SdkGuideSC  ${LANG_CZECH}   "QFW XCP SDK - Průvodce integrací"
+LangString SdkGuideUrl ${LANG_ENGLISH} "${SDK_GUIDE_URL_EN}"
+LangString SdkGuideUrl ${LANG_CZECH}   "${SDK_GUIDE_URL_CS}"
+
+LangString RemoveUserData ${LANG_ENGLISH} "Do you also want to remove the QInsight license, user settings, layouts and data logs?$\r$\n$\r$\n$LOCALAPPDATA\Qenex\QInsight$\r$\n$\r$\nChoose No to keep them for a future installation."
+LangString RemoveUserData ${LANG_CZECH}   "Chcete odstranit také licenci, uživatelská nastavení, rozložení oken a datové logy QInsight?$\r$\n$\r$\n$LOCALAPPDATA\Qenex\QInsight$\r$\n$\r$\nVolbou Ne je ponecháte pro případnou budoucí instalaci."
 
 ;--------------------------------
 ; Instalace
@@ -114,13 +140,22 @@ Section "-Install"
 	SetShellVarContext all
 
 	; Kompletni Release vystup vcetne pluginu (Controls, Drivers, Protocols),
-	; runtimes a SyntaxHighlighting. PDB a datove logy se neinstaluji.
+	; runtimes a SyntaxHighlighting. PDB a datove logy se neinstaluji;
+	; Examples z bin take ne (kanonicky zdroj ukazek je QInsightSetup\Examples).
 	SetOutPath "$INSTDIR"
-	File /r /x "*.pdb" /x "*.qilog" /x "DataLogs" "${BUILD_DIR}\*.*"
+	File /r /x "*.pdb" /x "*.qilog" /x "DataLogs" /x "Examples" "${BUILD_DIR}\*.*"
 
-	; Ukazkove projekty
+	; Ukazkove projekty + Python generatory k nim (JSON Signal, Raw CAN)
 	SetOutPath "$INSTDIR\Examples"
 	File "${SETUP_DIR}\Examples\*.qproj"
+	File "${SETUP_DIR}\Examples\*.py"
+
+	; QFW XCP SDK ${SDK_VERSION} - source package unpacked with the same layout as
+	; the released zip (include/ engine/ glue/ port/ examples/ cmake/ tools/ docs/
+	; LICENSES/), so CMake projects can include() it straight from here.
+	; MANIFEST.json inside carries the SHA-256 of every file.
+	SetOutPath "$INSTDIR\SDK\${SDK_NAME}"
+	File /r "${SDK_DIR}\*.*"
 
 	; Ukazkove drivery a protokoly (pluginy z Examples projektu)
 	SetOutPath "$INSTDIR\Drivers"
@@ -147,8 +182,14 @@ Section "-Install"
 	; z posledni stranky pruvodce prebiraji aktualni $OUTDIR.
 	SetOutPath "$INSTDIR"
 
-	; Zastupce v nabidce Start
-	CreateShortCut "$SMPROGRAMS\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+	; Nabidka Start: slozka QInsight = aplikace + slozka SDK + online pruvodce
+	; integraci SDK (URL podle jazyka instalace). Plochy zastupce z instalaci
+	; pred 1.0.0 se odstrani.
+	Delete "$SMPROGRAMS\${APP_NAME}.lnk"
+	CreateDirectory "$SMPROGRAMS\${APP_NAME}"
+	CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+	CreateShortCut "$SMPROGRAMS\${APP_NAME}\$(SdkFolderSC).lnk" "$INSTDIR\SDK"
+	WriteIniStr "$SMPROGRAMS\${APP_NAME}\$(SdkGuideSC).url" "InternetShortcut" "URL" "$(SdkGuideUrl)"
 
 	; Asociace .qproj s QInsight
 	WriteRegStr HKLM "Software\Classes\${ASSOC_EXT}\OpenWithProgids" "${ASSOC_PROGID}" ""
@@ -211,8 +252,11 @@ Section "Uninstall"
 	SetShellVarContext all
 
 	Delete "$SMPROGRAMS\${APP_NAME}.lnk"
+	RMDir /r "$SMPROGRAMS\${APP_NAME}"
 	Delete "$DESKTOP\${APP_NAME}.lnk"
 
+	; Cela instalacni slozka vcetne SDK (soubory vytvorene uzivatelem
+	; v $INSTDIR by byly smazany take - Program Files, bezne se tam nepise).
 	RMDir /r "$INSTDIR"
 
 	; Volitelne smazani uzivatelskych dat (nastaveni, layouty, datove logy).
