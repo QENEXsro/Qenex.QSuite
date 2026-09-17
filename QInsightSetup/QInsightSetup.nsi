@@ -24,7 +24,6 @@ SetCompressor /SOLID lzma
 !define SRC_ROOT        "D:\Projects\Qenex\Source\Qenex.QSuite"
 !define BUILD_DIR       "${SRC_ROOT}\QInsight\bin\Release\net10.0-windows"
 !define SETUP_DIR       "${SRC_ROOT}\QInsightSetup"
-!define EXAMPLES_SRC    "${SRC_ROOT}\Examples"
 
 !define UNINST_KEY      "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
@@ -157,13 +156,8 @@ Section "-Install"
 	SetOutPath "$INSTDIR\SDK\${SDK_NAME}"
 	File /r "${SDK_DIR}\*.*"
 
-	; Ukazkove drivery a protokoly (pluginy z Examples projektu)
-	SetOutPath "$INSTDIR\Drivers"
-	File "${EXAMPLES_SRC}\IssDriver\bin\Release\net10.0\Qenex.QSuite.Examples.IssDriver.dll"
-	File "${EXAMPLES_SRC}\TempSensorDriver\bin\Release\net10.0\Qenex.QSuite.Examples.TempSensorDriver.dll"
-	SetOutPath "$INSTDIR\Protocols"
-	File "${EXAMPLES_SRC}\IssJsonProtocol\bin\Release\net10.0\Qenex.QSuite.Examples.IssJsonProtocol.dll"
-	File "${EXAMPLES_SRC}\TempSensorProtocol\bin\Release\net10.0\Qenex.QSuite.Examples.TempSensorProtocol.dll"
+	; Example drivers/protocols (Examples\*) reach $INSTDIR\Drivers|Protocols through the BUILD_DIR copy
+	; above - their csproj post-build xcopy puts them into the QInsight output like every other plugin.
 
 	; Vychozi konfigurace do %LOCALAPPDATA%\Qenex\QInsight aktualniho uzivatele
 	; (app settings s prazdnou cestou k Pythonu + vychozi edit/runtime layouty).

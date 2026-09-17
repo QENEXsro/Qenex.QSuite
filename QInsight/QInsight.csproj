@@ -13,6 +13,9 @@
     <LangVersion>latestmajor</LangVersion>
     <!-- Pouzivame jen anglictinu -> nekopiruj lokalizovane satelitni assembly (slozky cs, de, es, fr, it, ...) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
