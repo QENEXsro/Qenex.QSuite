@@ -14,4 +14,13 @@
       <ProjectReference Include="..\..\Specifications\ComponentSpecification\ComponentSpecification.csproj" />
     </ItemGroup>
 
+    <PropertyGroup>
+        <EazfuscatorIntegration>MSBuild</EazfuscatorIntegration>
+        <EazfuscatorActiveConfigurations>Debug;Release</EazfuscatorActiveConfigurations>
+    </PropertyGroup>
+
+    <!-- Eazfuscator.NET: obfuscation as a build step (only when the tool is installed) -->
+    <Import Condition="'$(EAZFUSCATOR_NET_HOME)' != '' and Exists('$(EAZFUSCATOR_NET_HOME)\Integration\MSBuild\Eazfuscator.NET.targets')"
+            Project="$(EAZFUSCATOR_NET_HOME)\Integration\MSBuild\Eazfuscator.NET.targets" />
+
 </Project>
