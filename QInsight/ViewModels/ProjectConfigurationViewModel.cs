@@ -1,4 +1,5 @@
 ﻿using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
@@ -259,14 +260,39 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
     /// IsEnabled of the checkbox on the Variables page (CEO decision 2026-09-18). Recomputed from the
     /// dialog's own driver list, so a driver added a moment ago in this dialog counts immediately.
     /// The per-variable flag itself is never cleared: remove and re-add the driver and it is back.</summary>
-    public bool IsFileLoggingAvailable => Drivers.Any(driver => IsFileLogDriver(driver.Driver) && driver.IsEnabled);
+    public bool IsFileLoggingAvailable => Drivers.Any(driver =>
+        IsFileLogDriver(driver.Driver) && driver.IsEnabled
+        && driver.Protocols.Any(protocol => protocol.Protocol is IProtocolVariableSinkProtocol && protocol.IsEnabled));
 
-    /// <summary>Explanation shown under the greyed-out checkbox; empty when logging is available.</summary>
-    public string FileLoggingHint => IsFileLoggingAvailable
-        ? string.Empty
-        : Drivers.Any(driver => IsFileLogDriver(driver.Driver))
-            ? "The File data logger driver is disabled. Enable it on the Drivers page to log variables to a file."
-            : "Add the File data logger driver on the Drivers page to log variables to a file. The setting is kept and takes effect once the driver is present.";
+    /// <summary>Explanation shown under the greyed-out checkbox; empty when logging is available.
+    /// Names the missing piece: the driver, the driver's enabled state, or its Data Log Pass-Through
+    /// protocol (the sink the logged variables are attached to; added automatically with the driver,
+    /// but it can be removed or disabled by hand).</summary>
+    public string FileLoggingHint
+    {
+        get
+        {
+            if (IsFileLoggingAvailable)
+            {
+                return string.Empty;
+            }
+
+            var fileLogDriver = Drivers.FirstOrDefault(driver => IsFileLogDriver(driver.Driver));
+            if (fileLogDriver == null)
+            {
+                return "Add the File data logger driver on the Drivers page to log variables to a file. The setting is kept and takes effect once the driver is present.";
+            }
+
+            if (!fileLogDriver.IsEnabled)
+            {
+                return "The File data logger driver is disabled. Enable it on the Drivers page to log variables to a file.";
+            }
+
+            return fileLogDriver.Protocols.Any(protocol => protocol.Protocol is IProtocolVariableSinkProtocol)
+                ? "The Data Log Pass-Through protocol of the File data logger driver is disabled. Enable it to log variables to a file."
+                : "Add the Data Log Pass-Through protocol to the File data logger driver (Drivers page) to log variables to a file.";
+        }
+    }
 
     private void NotifyFileLoggingAvailabilityChanged()
     {
@@ -926,6 +952,14 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         {
             ErrorMessage = string.Empty;
             var driver = CreateDriver(SelectedDriverPlugin.Plugin);
+            if (IsFileLogDriver(driver))
+            {
+                // The logger is useless without its Data Log Pass-Through sink protocol: add it right
+                // here (before the wrapper is built) so the user sees it in the dialog at once and the
+                // "Log to FileDataLogger" checkbox becomes available immediately, not only after Apply.
+                EnsureSinkProtocol(driver);
+            }
+
             var wrapper = AddDriverToProject(driver, isNew: true);
             addedDrivers.Add(wrapper);
             SelectedDriver = wrapper;
@@ -1200,6 +1234,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
     private void SubscribeDriverWrapper(ProjectConfigurationDriverWrapper driver)
     {
         driver.PropertyChanged += OnDriverPropertyChanged;
+        driver.Protocols.CollectionChanged += OnDriverProtocolsChanged;
         foreach (var protocol in driver.Protocols)
         {
             protocol.PropertyChanged += OnProtocolPropertyChanged;
@@ -1209,10 +1244,18 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
     private void UnsubscribeDriverWrapper(ProjectConfigurationDriverWrapper driver)
     {
         driver.PropertyChanged -= OnDriverPropertyChanged;
+        driver.Protocols.CollectionChanged -= OnDriverProtocolsChanged;
         foreach (var protocol in driver.Protocols)
         {
             protocol.PropertyChanged -= OnProtocolPropertyChanged;
         }
+    }
+
+    /// <summary>Adding or removing a protocol (e.g. the logger's Data Log Pass-Through sink) changes
+    /// whether "Log to FileDataLogger" can do anything.</summary>
+    private void OnDriverProtocolsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        NotifyFileLoggingAvailabilityChanged();
     }
 
     private void AddProtocol()
@@ -3071,6 +3114,12 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             && e.PropertyName != nameof(ProjectConfigurationLoadedProtocolWrapper.IsEnabled))
         {
             return;
+        }
+
+        if (e.PropertyName == nameof(ProjectConfigurationLoadedProtocolWrapper.IsEnabled))
+        {
+            // A disabled Data Log Pass-Through protocol logs nothing — grey the checkbox out.
+            NotifyFileLoggingAvailabilityChanged();
         }
 
         NotifyHasChangesChanged();
