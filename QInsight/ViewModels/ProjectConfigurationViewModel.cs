@@ -254,6 +254,26 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
     public RelayCommand<object> ApplyCommand { get; }
     public RelayCommand<object> OkCommand { get; }
     public RelayCommand<object> CancelCommand { get; }
+    /// <summary>True when the project (as currently edited in this dialog, before Apply) contains an
+    /// enabled File data logger driver — only then can "Log to FileDataLogger" do anything. Drives the
+    /// IsEnabled of the checkbox on the Variables page (CEO decision 2026-09-18). Recomputed from the
+    /// dialog's own driver list, so a driver added a moment ago in this dialog counts immediately.
+    /// The per-variable flag itself is never cleared: remove and re-add the driver and it is back.</summary>
+    public bool IsFileLoggingAvailable => Drivers.Any(driver => IsFileLogDriver(driver.Driver) && driver.IsEnabled);
+
+    /// <summary>Explanation shown under the greyed-out checkbox; empty when logging is available.</summary>
+    public string FileLoggingHint => IsFileLoggingAvailable
+        ? string.Empty
+        : Drivers.Any(driver => IsFileLogDriver(driver.Driver))
+            ? "The File data logger driver is disabled. Enable it on the Drivers page to log variables to a file."
+            : "Add the File data logger driver on the Drivers page to log variables to a file. The setting is kept and takes effect once the driver is present.";
+
+    private void NotifyFileLoggingAvailabilityChanged()
+    {
+        OnPropertyChanged(nameof(IsFileLoggingAvailable));
+        OnPropertyChanged(nameof(FileLoggingHint));
+    }
+
     public RelayCommand<object> AddDriverCommand { get; }
     public RelayCommand<object> RemoveDriverCommand { get; }
     public RelayCommand<object> AddProtocolCommand { get; }
@@ -997,6 +1017,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             AddProtocolToSourceOptions(wrapper, protocol.Protocol);
         }
 
+        NotifyFileLoggingAvailabilityChanged();
         return wrapper;
     }
 
@@ -1035,6 +1056,8 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         {
             SelectedDriver = Drivers.FirstOrDefault();
         }
+
+        NotifyFileLoggingAvailabilityChanged();
     }
 
     private void RemoveDriverFromProject(ProjectConfigurationDriverWrapper driver)
@@ -1047,6 +1070,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         UnsubscribeDriverWrapper(driver);
         Drivers.Remove(driver);
         drivers.Remove(driver.Driver);
+        NotifyFileLoggingAvailabilityChanged();
     }
 
     private void RestoreDriverToProject(ProjectConfigurationDriverWrapper driver)
@@ -1062,6 +1086,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         }
 
         SubscribeDriverWrapper(driver);
+        NotifyFileLoggingAvailabilityChanged();
         foreach (var protocol in driver.Protocols)
         {
             AddProtocolToSourceOptions(driver, protocol.Protocol);
@@ -2919,6 +2944,13 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             EnsureSinkProtocol(fileLogDriver);
             SynchronizeSinkDriverVariables(fileLogDriver, loggedVariables);
         }
+        else if (loggedVariables.Count > 0)
+        {
+            // The checkbox is greyed out without the driver, but a project may carry the flags from
+            // before the driver was removed — say so instead of logging nothing silently.
+            Logger?.Log(LogLevel.Info,
+                $"{loggedVariables.Count} variable(s) are marked \"Log to FileDataLogger\", but the project has no File data logger driver — nothing is logged until the driver is added.");
+        }
 
         var replayDriver = drivers.FirstOrDefault(IsReplayDriver);
         if (replayDriver != null)
@@ -3011,6 +3043,12 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             && e.PropertyName != nameof(ProjectConfigurationDriverWrapper.IsEnabled))
         {
             return;
+        }
+
+        if (e.PropertyName == nameof(ProjectConfigurationDriverWrapper.IsEnabled))
+        {
+            // A disabled File data logger driver logs nothing either — grey the checkbox out.
+            NotifyFileLoggingAvailabilityChanged();
         }
 
         NotifyHasChangesChanged();

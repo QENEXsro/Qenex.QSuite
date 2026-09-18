@@ -898,12 +898,35 @@
                             Margin="0,0,0,6"
                             Content="Communicated"
                             IsChecked="{Binding SelectedCommunicatedVariable.IsCommunicated, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                        <CheckBox
+                        <!-- Logging needs an enabled File data logger driver in the project (as edited in this
+                             dialog); without it the checkbox is greyed out and the hint says what to add. The
+                             flag itself is kept, so the choice survives removing and re-adding the driver. -->
+                        <StackPanel
                             Grid.Row="9"
                             Grid.Column="1"
-                            Margin="0,0,0,6"
-                            Content="Log to FileDataLogger"
-                            IsChecked="{Binding SelectedCommunicatedVariable.IsFileLogEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            Margin="0,0,0,6">
+                            <CheckBox
+                                Content="Log to FileDataLogger"
+                                IsEnabled="{Binding IsFileLoggingAvailable}"
+                                ToolTip="{Binding FileLoggingHint}"
+                                ToolTipService.ShowOnDisabled="True"
+                                IsChecked="{Binding SelectedCommunicatedVariable.IsFileLogEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            <TextBlock
+                                Margin="20,2,0,0"
+                                TextWrapping="Wrap"
+                                Opacity="0.7"
+                                Text="{Binding FileLoggingHint}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsFileLoggingAvailable}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
                     </Grid>
                 </Grid>
             </Grid>
