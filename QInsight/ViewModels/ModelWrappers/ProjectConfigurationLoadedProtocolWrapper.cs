@@ -5,7 +5,10 @@ using Qenex.QSuite.Protocols.Protocol;
 
 namespace Qenex.QInsight.ViewModels.ModelWrappers;
 
-public class ProjectConfigurationLoadedProtocolWrapper(IProtocolBase protocol, bool isNew = false) : PropertyChangedBase
+/// <param name="isManaged">True for protocols QInsight manages itself — the File data replay driver's
+/// protocol and the File data logger's Data Log Pass-Through sink. Their Enabled state is driven by
+/// the application (replay mode, logging), so the dialog shows it read-only (CEO 2026-09-18).</param>
+public class ProjectConfigurationLoadedProtocolWrapper(IProtocolBase protocol, bool isNew = false, bool isManaged = false) : PropertyChangedBase
 {
     private bool originalIsEnabled = protocol.IsEnabled;
     private bool isEnabled = protocol.IsEnabled;
@@ -49,12 +52,22 @@ public class ProjectConfigurationLoadedProtocolWrapper(IProtocolBase protocol, b
         }
     }
 
+    /// <summary>Managed protocols (replay, logger sink) keep the Enabled state the application gives them.</summary>
+    public bool IsManaged => isManaged;
+
+    public bool CanEditIsEnabled => !isManaged;
+
+    /// <summary>Tooltip of the (read-only) Enabled checkbox; null for ordinary protocols so no tooltip shows.</summary>
+    public string? EnabledToolTip => isManaged
+        ? "Managed by QInsight (file data replay / data log) — the state follows the application, it is not edited here."
+        : null;
+
     public bool IsEnabled
     {
         get => isEnabled;
         set
         {
-            if (isEnabled == value)
+            if (!CanEditIsEnabled || isEnabled == value)
             {
                 return;
             }
@@ -82,7 +95,7 @@ public class ProjectConfigurationLoadedProtocolWrapper(IProtocolBase protocol, b
         }
     }
 
-    public bool HasChanges => isEnabled != originalIsEnabled || settings != originalSettings;
+    public bool HasChanges => (CanEditIsEnabled && isEnabled != originalIsEnabled) || settings != originalSettings;
 
     public void ApplyChanges()
     {

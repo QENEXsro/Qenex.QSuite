@@ -352,6 +352,9 @@
                                             <CheckBox
                                                 HorizontalAlignment="Center"
                                                 VerticalAlignment="Center"
+                                                IsEnabled="{Binding CanEditIsEnabled}"
+                                                ToolTip="{Binding EnabledToolTip}"
+                                                ToolTipService.ShowOnDisabled="True"
                                                 IsChecked="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                         </DataTemplate>
                                     </telerik:GridViewDataColumn.CellTemplate>

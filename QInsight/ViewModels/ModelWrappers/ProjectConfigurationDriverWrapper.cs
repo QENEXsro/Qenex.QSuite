@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using Qenex.QInsight.Helpers;
 using Qenex.QLibs.QUI;
 using Qenex.QSuite.Drivers.Driver;
+using Qenex.QSuite.Protocols.Protocol;
 
 namespace Qenex.QInsight.ViewModels.ModelWrappers;
 
@@ -27,8 +28,14 @@ public class ProjectConfigurationDriverWrapper(IDriverBase driver, bool isNew = 
 
     public IDriverBase Driver => driver;
     public bool IsNew => isNew;
+    // Replay protocols and the logger's Data Log Pass-Through sink are managed by QInsight itself:
+    // their Enabled state is read-only in the dialog and they cannot be added or removed by hand.
     public ObservableCollection<ProjectConfigurationLoadedProtocolWrapper> Protocols { get; } = new(
-        driver.Protocols.Select(protocol => new ProjectConfigurationLoadedProtocolWrapper(protocol)));
+        driver.Protocols.Select(protocol => new ProjectConfigurationLoadedProtocolWrapper(
+            protocol, isManaged: IsFileDataReplay(driver) || protocol is IProtocolVariableSinkProtocol)));
+
+    /// <summary>Drivers whose protocol list QInsight manages (see <see cref="Protocols"/>).</summary>
+    public bool HasManagedProtocols => IsFileDataReplayDriver || IsFileDataLoggerDriver;
 
     public string Name => driver.Specification.Name;
     public string Version => driver.Specification.Version.ToDisplayString();

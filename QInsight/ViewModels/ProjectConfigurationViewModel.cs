@@ -186,7 +186,8 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         AddDriverCommand = new RelayCommand<object>(_ => AddDriver(), _ => CanAddDriver());
         RemoveDriverCommand = new RelayCommand<object>(_ => RemoveDriver(), _ => SelectedDriver != null);
         AddProtocolCommand = new RelayCommand<object>(_ => AddProtocol(), _ => CanAddProtocol());
-        RemoveProtocolCommand = new RelayCommand<object>(_ => RemoveProtocol(), _ => SelectedProtocol != null);
+        // Managed protocols (replay, logger sink) are added and removed together with their driver.
+        RemoveProtocolCommand = new RelayCommand<object>(_ => RemoveProtocol(), _ => SelectedProtocol is { IsManaged: false });
         SelectDriverCommand = new RelayCommand<object>(SelectDriver);
         AddVariableCommand = new RelayCommand<object>(_ => AddVariable(), _ => CanAddVariable());
         RemoveVariableCommand = new RelayCommand<object>(_ => RemoveVariable(), _ => CanRemoveVariable());
@@ -1298,7 +1299,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
 
     private bool CanAddProtocol()
     {
-        return SelectedDriver != null
+        return SelectedDriver is { HasManagedProtocols: false }
                && SelectedProtocolPlugin is { IsCompatible: true }
                && SelectedDriver.Protocols.All(protocol => !protocol.Protocol.Specification.Name.Equals(
                    SelectedProtocolPlugin.Plugin.Name,
