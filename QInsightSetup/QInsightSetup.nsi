@@ -83,7 +83,7 @@ VIAddVersionKey /LANG=0 "Comments" "Includes QFW XCP SDK ${SDK_VERSION}"
 !define MUI_ABORTWARNING
 
 ; Stranky instalace: uvitani -> licence -> volba cesty -> instalace -> dokonceni
-; Licence = QENEX Software License Agreement v1.1 (EN/CZ dle zvoleneho jazyka instalatoru);
+; Licence = QENEX Software License Agreement v1.2 (EN/CZ dle zvoleneho jazyka instalatoru);
 ; zdroj textu: QenexAi\Standa\KnowledgeBase\Legal\*.txt, RTF generovano z nej skriptem eula_to_rtf.py (nemenit rucne).
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "$(LicenseFile)"
@@ -148,6 +148,14 @@ Section "-Install"
 	SetOutPath "$INSTDIR\Examples"
 	File "${SETUP_DIR}\Examples\*.qproj"
 	File "${SETUP_DIR}\Examples\*.py"
+
+	; Third-party notices (EULA section 6): license texts of the redistributed components
+	; (ScottPlot, SkiaSharp, OpenTK, AvalonEdit, Python.NET, ...) and the Telerik copyright notice.
+	; Regenerate with Tomas/KnowledgeBase/ThirdPartyLicenses.md when a redistributed package changes.
+	SetOutPath "$INSTDIR"
+	File "${SETUP_DIR}\ThirdParty\THIRD-PARTY-NOTICES.txt"
+	SetOutPath "$INSTDIR\LICENSES"
+	File "${SETUP_DIR}\ThirdParty\LICENSES\*.txt"
 
 	; QFW XCP SDK ${SDK_VERSION} - source package unpacked with the same layout as
 	; the released zip (include/ engine/ glue/ port/ examples/ cmake/ tools/ docs/
