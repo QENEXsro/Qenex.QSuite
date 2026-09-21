@@ -458,9 +458,23 @@ if "__qenex_interactive_console" not in globals():
         return OnValueChangedScriptTriggers.Any(t => t.VariableId == variableId);
     }
 
+    /// <summary>
+    /// True = value-changed notifications do not run scripts. Set by the host around a replay
+    /// seek: the history re-sent up to the new position only restores the variable values and
+    /// the charts, it is not a run of the data — scripts continue from the new position when
+    /// the replay is resumed.
+    /// </summary>
+    public bool SuppressValueChangedScripts
+    {
+        get => suppressValueChangedScripts;
+        set => suppressValueChangedScripts = value;
+    }
+
+    private volatile bool suppressValueChangedScripts;
+
     public async Task HandleVariableValueChangedAsync(IVariableBase variable)
     {
-        if (isStopping)
+        if (isStopping || suppressValueChangedScripts)
         {
             return;
         }
@@ -1056,6 +1070,17 @@ if "__qenex_interactive_console" not in globals():
         }
 
         return state;
+    }
+
+    /// <summary>
+    /// Forgets the observed call periods and pending skips of the overload guard. For the host
+    /// after a replay seek: the history re-sent up to the new position arrives as one burst, the
+    /// guard reads it as a near-zero call period and would keep skipping script calls for
+    /// seconds after the replay continues, although the script itself is fast.
+    /// </summary>
+    public void ResetScriptOverloadGuard()
+    {
+        ClearScriptOverloadState();
     }
 
     private void ClearScriptOverloadState()

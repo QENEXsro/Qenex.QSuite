@@ -2854,7 +2854,22 @@ public partial class ShellWindowModel
             // position first — queued stale samples included — before any re-sent sample
             // can arrive. Continuation of the Task.Delay above: still the UI thread.
             ResetWorkspaceControlTimelines();
-            await activeReplayDriver.SeekAsync(TimeSpan.FromSeconds(seconds));
+
+            // The history re-sent up to the new position only restores the variable values and
+            // the charts — it is not a run of the data, so value-changed scripts stay silent and
+            // continue from the new position when the replay is resumed. The overload guard is
+            // reset as well, so nothing observed around the seek delays the first script call.
+            var scripting = realProjectData.Module.Scripting;
+            scripting.SuppressValueChangedScripts = true;
+            try
+            {
+                await activeReplayDriver.SeekAsync(TimeSpan.FromSeconds(seconds));
+            }
+            finally
+            {
+                scripting.SuppressValueChangedScripts = false;
+                scripting.ResetScriptOverloadGuard();
+            }
         }
         catch (Exception e)
         {
