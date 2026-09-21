@@ -42,6 +42,52 @@ SetCompressor /SOLID lzma
 	!error "QFW XCP SDK ${SDK_VERSION} is not unpacked at ${SDK_DIR} - run Prepare-Sdk.ps1 first"
 !endif
 
+; Completeness check of the Release output. The plugins reach BUILD_DIR through post-build xcopy
+; steps, which can silently miss in a parallel solution build (2026-09-21: TempSensorProtocol was
+; not copied). "File /r" would then build an incomplete installer without any warning, so every
+; expected plugin is required here. A new plugin = a new line.
+!macro RequireFile PATH
+	!if ! /FileExists "${PATH}"
+		!error "Installer input is missing: ${PATH} - rebuild the solution in Release (and sign) first"
+	!endif
+!macroend
+
+!insertmacro RequireFile "${BUILD_DIR}\${APP_EXE}"
+!insertmacro RequireFile "${BUILD_DIR}\Qenex.QInsight.dll"
+
+!insertmacro RequireFile "${BUILD_DIR}\Controls\Qenex.QSuite.Controls.GaugeControl.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Controls\Qenex.QSuite.Controls.GraphControl.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Controls\Qenex.QSuite.Controls.MatrixControl.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Controls\Qenex.QSuite.Controls.SignalControl.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Controls\Qenex.QSuite.Controls.WatchTableControl.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Controls\Qenex.QSuite.Controls.XYGraphControl.dll"
+
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Drivers.FileDataLoggerDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Drivers.FileDataReplayDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Drivers.PeakCanDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Drivers.SerialPortDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Drivers.SimDataDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Drivers.TcpClientDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Drivers.TcpServerDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Drivers.VirtualDataDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Examples.IssDriver.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Drivers\Qenex.QSuite.Examples.TempSensorDriver.dll"
+
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.DataLogReplayProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.JsonSignalProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.ModbusMasterProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.ModbusSlaveProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.PassThroughProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.RawCanProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.SimulDataProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.VirtualDataProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.XcpProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Protocols.XcpTcpProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Examples.IssJsonProtocol.dll"
+!insertmacro RequireFile "${BUILD_DIR}\Protocols\Qenex.QSuite.Examples.TempSensorProtocol.dll"
+
+!insertmacro RequireFile "${SETUP_DIR}\ThirdParty\THIRD-PARTY-NOTICES.txt"
+
 Name "${APP_NAME}"
 OutFile "D:\Projects\Qenex\Release\QInsight\QInsight-Setup-${APP_VERSION}.exe"
 BrandingText "${APP_PUBLISHER}"
