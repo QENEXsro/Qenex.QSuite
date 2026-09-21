@@ -5,7 +5,10 @@ namespace Qenex.QSuite.Protocols.VirtualDataProtocol;
 /// <summary>
 /// Specification of one virtual variable. There is nothing to address — the module routes
 /// script writes by variable identity — and no event to reference — samples are born from the
-/// writes themselves, so the commParam is empty. Keys from older projects (id=) are ignored.
+/// writes themselves. The only parameter is the direction: write / readWrite lets the operator
+/// write the variable from controls (scripts can always write it). Keys from older projects
+/// (id=) are ignored. The property matches the commParam key 1:1, so the inherited
+/// reflection-based ToCommParam round-trips.
 /// </summary>
 public class VirtualDataProtocolVariableSpecification : ProtVariableSpecification
 {
@@ -13,6 +16,8 @@ public class VirtualDataProtocolVariableSpecification : ProtVariableSpecificatio
     {
         Name = "VirtualDataProtocolVariableSpecification";
     }
+
+    public CommDirection Direction { get; set; } = CommDirection.Read;
 
     public static VirtualDataProtocolVariableSpecification Create(string commParams)
     {
@@ -24,7 +29,13 @@ public class VirtualDataProtocolVariableSpecification : ProtVariableSpecificatio
             .Where(parts => parts.Length == 2)
             .ToDictionary(parts => parts[0].Trim(), parts => parts[1].Trim().Trim('"'), StringComparer.OrdinalIgnoreCase);
 
-        _ = parameters;
-        return new VirtualDataProtocolVariableSpecification();
+        var direction = CommDirection.Read;
+        if (parameters.TryGetValue("direction", out var directionText)
+            && Enum.TryParse<CommDirection>(directionText, ignoreCase: true, out var parsedDirection))
+        {
+            direction = parsedDirection;
+        }
+
+        return new VirtualDataProtocolVariableSpecification { Direction = direction };
     }
 }

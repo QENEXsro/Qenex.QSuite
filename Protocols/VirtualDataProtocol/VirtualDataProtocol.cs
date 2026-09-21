@@ -17,7 +17,7 @@ namespace Qenex.QSuite.Protocols.VirtualDataProtocol;
 /// One write = one published sample, stamped with the time of the write (during replay with
 /// the time of the last replayed sample, supplied by the module).
 /// </summary>
-public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAwareProtocol
+public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAwareProtocol, IProtocolVariableWriteProtocol
 {
     // Script writes waiting for publishing; the channel keeps the consumer loop cancelable.
     private Channel<VirtualWrite>? pendingWrites;
@@ -167,6 +167,29 @@ public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAware
         }
 
         pendingWrites?.Writer.TryWrite(new VirtualWrite(variable, timestampUtc));
+    }
+
+    #endregion
+
+    #region IProtocolVariableWriteProtocol
+
+    /// <summary>
+    /// An operator may write a virtual variable from controls when its direction is write or
+    /// readWrite. Script writes do not depend on the direction.
+    /// </summary>
+    public bool CanWriteVariable(IProtocolVariable protocolVariable)
+    {
+        return Variables.Contains(protocolVariable)
+               && protocolVariable.ProtocolVariableSpecification is VirtualDataProtocolVariableSpecification
+               {
+                   Direction: CommDirection.Write or CommDirection.ReadWrite
+               };
+    }
+
+    // Nothing to transfer: there is no device, the written value already lives in the variable.
+    public Task WriteVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        return Task.CompletedTask;
     }
 
     #endregion
