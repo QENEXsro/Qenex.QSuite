@@ -36,7 +36,6 @@ public class PresentationPropertiesViewModel : PropertyChangedBaseWithValidation
         return
         [
             Create("Presentation", "Name", () => presentation.Name, value => presentation.Name = value),
-            Create("Presentation", "Label", () => presentation.Label, value => presentation.Label = value),
             Create("Presentation", "Min", () => presentation.Min, value => presentation.Min = Parse<double>(value)),
             Create("Presentation", "Max", () => presentation.Max, value => presentation.Max = Parse<double>(value)),
             Create("Presentation", "Print Format", () => presentation.PrintFormat, value => presentation.PrintFormat = value),

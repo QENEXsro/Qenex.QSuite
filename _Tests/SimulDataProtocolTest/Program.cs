@@ -86,7 +86,7 @@ static ScalarVariable DoubleVariable(int id, string name) => new()
 
 static IPresentation Linear(string name, double multiplier, string unit = "") => new Presentation
 {
-    Name = name, Label = name, Unit = unit, PrintFormat = "",
+    Name = name, Unit = unit, PrintFormat = "",
     Conversion = new LinearValConversion { Multiplier = multiplier, Offset = 0 }
 };
 

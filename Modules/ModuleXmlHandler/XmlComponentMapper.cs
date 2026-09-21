@@ -23,7 +23,6 @@ public static class XmlComponentMapper
         return presentations.Select(presentation => new XmlPresentation
         {
             Name = presentation.Name,
-            Label = presentation.Label,
             Min = presentation.Min,
             Max = presentation.Max,
             PrintFormat = presentation.PrintFormat,
@@ -58,7 +57,6 @@ public static class XmlComponentMapper
             presentations.Add(new Presentation
             {
                 Name = xmlPresentation.Name,
-                Label = xmlPresentation.Label,
                 Min = xmlPresentation.Min,
                 Max = xmlPresentation.Max,
                 PrintFormat = xmlPresentation.PrintFormat,

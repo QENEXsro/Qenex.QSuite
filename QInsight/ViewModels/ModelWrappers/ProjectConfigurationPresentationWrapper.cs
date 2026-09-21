@@ -32,16 +32,13 @@ public class ProjectConfigurationPresentationWrapper : PropertyChangedBase
     public IPresentation Presentation { get; }
     public bool IsNew { get; }
     public string Name => currentState.Name;
-    public string DisplayName => string.IsNullOrWhiteSpace(currentState.Label)
-        ? currentState.Name
-        : currentState.Label;
+    public string DisplayName => currentState.Name;
     public ObservableCollection<EditablePropertyWrapper> Properties { get; }
     public bool HasChanges => !currentState.Equals(originalState);
 
     public void ApplyChanges()
     {
         Presentation.Name = currentState.Name;
-        Presentation.Label = currentState.Label;
         Presentation.Min = currentState.Min;
         Presentation.Max = currentState.Max;
         Presentation.PrintFormat = currentState.PrintFormat;
@@ -69,7 +66,6 @@ public class ProjectConfigurationPresentationWrapper : PropertyChangedBase
         return new Presentation
         {
             Name = name,
-            Label = currentState.Label,
             Min = currentState.Min,
             Max = currentState.Max,
             PrintFormat = currentState.PrintFormat,
@@ -91,7 +87,6 @@ public class ProjectConfigurationPresentationWrapper : PropertyChangedBase
         var properties = new ObservableCollection<EditablePropertyWrapper>
         {
             Create("Presentation", "Name", () => currentState.Name, value => UpdateState(currentState with { Name = value })),
-            Create("Presentation", "Label", () => currentState.Label, value => UpdateState(currentState with { Label = value })),
             Create("Presentation", "Min", () => currentState.Min, value => UpdateState(currentState with { Min = Parse<double>(value) })),
             Create("Presentation", "Max", () => currentState.Max, value => UpdateState(currentState with { Max = Parse<double>(value) })),
             Create("Presentation", "Print Format", () => currentState.PrintFormat, value => UpdateState(currentState with { PrintFormat = value })),
@@ -185,7 +180,6 @@ public class ProjectConfigurationPresentationWrapper : PropertyChangedBase
 
     private sealed record PresentationState(
         string Name,
-        string Label,
         double Min,
         double Max,
         string PrintFormat,
@@ -196,7 +190,6 @@ public class ProjectConfigurationPresentationWrapper : PropertyChangedBase
         {
             return new PresentationState(
                 presentation.Name,
-                presentation.Label,
                 presentation.Min,
                 presentation.Max,
                 presentation.PrintFormat,

@@ -22,8 +22,8 @@ public class PresentationSeWrapper : PropertyChangedBase, IViewableItem
 
     public string Label
     {
-        get => Presentation.Label;
-        set { Presentation.Label = value; OnPropertyChanged(); }
+        get => Presentation.Name;
+        set { Presentation.Name = value; OnPropertyChanged(); }
     }
     
     public FontWeight LabelWeight => FontWeights.Normal;
@@ -50,7 +50,7 @@ public class PresentationSeWrapper : PropertyChangedBase, IViewableItem
         var sb = new StringBuilder();
         sb.Append("Presentation:");
         sb.Append(Environment.NewLine);
-        sb.Append($"Label\t{Presentation.Label}");
+        sb.Append($"Name\t{Presentation.Name}");
         sb.Append(Environment.NewLine);
         sb.Append($"Conv.\t{Presentation.Conversion.ToString()}");
         sb.Append(Environment.NewLine);

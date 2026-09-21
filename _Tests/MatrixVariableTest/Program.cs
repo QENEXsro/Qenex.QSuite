@@ -70,7 +70,6 @@ static IPresentation LinearPresentation(string name, double multiplier, double o
     => new Presentation
     {
         Name = name,
-        Label = name,
         PrintFormat = printFormat,
         Unit = unit,
         Conversion = new LinearValConversion { Multiplier = multiplier, Offset = offset }
