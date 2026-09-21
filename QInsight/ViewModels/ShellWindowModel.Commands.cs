@@ -2070,7 +2070,7 @@ public partial class ShellWindowModel
             RefreshCommunicatedDriversProperties();
             SubscribeReplayCompleted(replayDriver);
             LoadSettingsFromFile(shellRadDocking, runtimeSettingLayoutFile);
-            RebindWorkspaceControlVariables(replayProtocol.Variables);
+            RebindWorkspaceControlVariables(GetReplayControlVariables(replayProtocol));
             SetRuntimeStartedState(true);
             isReplayMode = true;
             realProjectData.Module.Scripting.IsReplayMode = true;
@@ -2487,16 +2487,64 @@ public partial class ShellWindowModel
 
     private void ApplyReplayStates(IDriverBase replayDriver, IProtocolBase replayProtocol)
     {
+        // Collected before the flags are overwritten below.
+        var scriptWrittenProtocols = GetReplayScriptWrittenProtocols();
+
         foreach (var driver in realProjectData.Module.Drivers)
         {
-            driver.IsEnabled = ReferenceEquals(driver, replayDriver);
+            driver.IsEnabled = ReferenceEquals(driver, replayDriver)
+                               || driver.Protocols.Any(scriptWrittenProtocols.Contains);
         }
 
         foreach (var protocol in realProjectData.Module.Drivers.SelectMany(driver => driver.Protocols))
         {
-            protocol.IsEnabled = ReferenceEquals(protocol, replayProtocol);
+            protocol.IsEnabled = ReferenceEquals(protocol, replayProtocol)
+                                 || scriptWrittenProtocols.Contains(protocol);
         }
 
+    }
+
+    // Protocols publishing script-computed variables (IScriptWriteAwareProtocol, e.g. Virtual
+    // Variables) keep running during replay, so scripts enabled for replay can be tested over a
+    // recorded data log. Only those the user has enabled (protocol and its driver); every other
+    // live source stays off so it cannot mix with the replayed data.
+    private HashSet<IProtocolBase> GetReplayScriptWrittenProtocols()
+    {
+        return realProjectData.Module.Drivers
+            .Where(driver => driver.IsEnabled && IsLiveSourceDriver(driver))
+            .SelectMany(driver => driver.Protocols)
+            .Where(protocol => protocol.IsEnabled && protocol is IScriptWriteAwareProtocol)
+            .ToHashSet();
+    }
+
+    // Replayed variables plus the script-computed ones. Membership in the replay protocol says
+    // nothing about the data: a data log import adds EVERY project variable to it. A
+    // script-computed variable is therefore taken from the recording only when the project logs
+    // it ("Log to FileDataLogger"); otherwise the control is bound to the script-written
+    // protocol variable, the only one that publishes samples for it during replay.
+    private List<IProtocolVariable> GetReplayControlVariables(IProtocolBase replayProtocol)
+    {
+        var loggedVariableIds = realProjectData.Module.Drivers
+            .Where(driver => driver is IProtocolVariableSinkDriver)
+            .SelectMany(driver => driver.Protocols)
+            .SelectMany(protocol => protocol.Variables)
+            .Where(protocolVariable => protocolVariable.IsCommunicated)
+            .Select(protocolVariable => protocolVariable.Variable.Id)
+            .ToHashSet();
+
+        var scriptComputedVariables = GetReplayScriptWrittenProtocols()
+            .SelectMany(protocol => protocol.Variables)
+            .Where(protocolVariable => protocolVariable.IsCommunicated
+                                       && !loggedVariableIds.Contains(protocolVariable.Variable.Id))
+            .ToList();
+        var scriptComputedVariableIds = scriptComputedVariables
+            .Select(protocolVariable => protocolVariable.Variable.Id)
+            .ToHashSet();
+
+        return replayProtocol.Variables
+            .Where(protocolVariable => !scriptComputedVariableIds.Contains(protocolVariable.Variable.Id))
+            .Concat(scriptComputedVariables)
+            .ToList();
     }
 
     private void RestoreReplayStates()

@@ -14,7 +14,8 @@ namespace Qenex.QSuite.Protocols.VirtualDataProtocol;
 /// own: every successful script write of one of its variables is enqueued by the module
 /// (IScriptWriteAwareProtocol) and the consumer loop publishes the notification, so the
 /// variables show up in controls, graphs and data logs like any other communicated signal.
-/// One write = one published sample, stamped with the time of the write.
+/// One write = one published sample, stamped with the time of the write (during replay with
+/// the time of the last replayed sample, supplied by the module).
 /// </summary>
 public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAwareProtocol
 {
@@ -153,12 +154,19 @@ public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAware
 
     public void OnVariableWrittenByScript(IVariableBase variable)
     {
+        OnVariableWrittenByScript(variable, DateTime.UtcNow);
+    }
+
+    // The module supplies the sample time: the time of the write in a live session, the time
+    // of the last replayed sample during replay.
+    public void OnVariableWrittenByScript(IVariableBase variable, DateTime timestampUtc)
+    {
         if (State != CommunicationState.Running)
         {
             return;
         }
 
-        pendingWrites?.Writer.TryWrite(new VirtualWrite(variable, DateTime.UtcNow));
+        pendingWrites?.Writer.TryWrite(new VirtualWrite(variable, timestampUtc));
     }
 
     #endregion

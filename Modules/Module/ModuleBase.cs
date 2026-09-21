@@ -20,6 +20,10 @@ public abstract class ModuleBase : IModuleBase
     private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, Task> Handler)> onValueChangedScriptSubscriptions = [];
     private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, Task> Handler)> protocolVariableSinkSubscriptions = [];
     private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, Task> Handler)> protocolVariableCommandSubscriptions = [];
+    private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, Task> Handler)> replaySampleTimeSubscriptions = [];
+
+    // UTC ticks of the last replayed sample; 0 outside replay or before the first sample.
+    private long replaySampleTimestampUtcTicks;
 
     #region Constructors
 
@@ -265,6 +269,9 @@ public abstract class ModuleBase : IModuleBase
         {
             RegisterScriptWrittenVariableRouting();
             await Scripting.InitializeSharedScopeAsync(Variables);
+            // Before the script triggers: handlers run in subscription order, so the replay
+            // sample time is already updated when the triggered script writes a variable.
+            SubscribeReplaySampleTime();
             SubscribeOnValueChangedScriptTriggers();
         }
         else if (scriptingDecision == ScriptingStartDecision.DisabledScriptsOnly)
@@ -290,6 +297,7 @@ public abstract class ModuleBase : IModuleBase
     {
         SetState(CommunicationState.Stopping);
         UnsubscribeOnValueChangedScriptTriggers();
+        UnsubscribeReplaySampleTime();
 
         var sinkDrivers = Drivers
             .Where(driver => driver is IProtocolVariableSinkDriver)
@@ -395,6 +403,7 @@ public abstract class ModuleBase : IModuleBase
             }
         }
 
+        var isReplay = Scripting.IsReplayMode;
         Scripting.VariableWrittenCallback = variable =>
         {
             if (!protocolsByVariableId.TryGetValue(variable.Id, out var protocols))
@@ -402,11 +411,69 @@ public abstract class ModuleBase : IModuleBase
                 return;
             }
 
+            var timestampUtc = GetScriptWriteTimestampUtc(isReplay);
             foreach (var protocol in protocols)
             {
-                protocol.OnVariableWrittenByScript(variable);
+                protocol.OnVariableWrittenByScript(variable, timestampUtc);
             }
         };
+    }
+
+    // Live session: the time of the write. Replay: the time of the last replayed sample, so a
+    // script-computed sample lines up with the recorded ones (any replay speed, after a seek).
+    private DateTime GetScriptWriteTimestampUtc(bool isReplay)
+    {
+        if (isReplay)
+        {
+            var ticks = Interlocked.Read(ref replaySampleTimestampUtcTicks);
+            if (ticks > 0)
+            {
+                return new DateTime(ticks, DateTimeKind.Utc);
+            }
+        }
+
+        return DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Replay only: tracks the time of the last replayed sample (variables of replay drivers).
+    /// </summary>
+    private void SubscribeReplaySampleTime()
+    {
+        UnsubscribeReplaySampleTime();
+        if (!Scripting.IsReplayMode)
+        {
+            return;
+        }
+
+        foreach (var protocolVariable in Drivers
+                     .Where(driver => driver is IReplayDriver)
+                     .SelectMany(driver => driver.Protocols)
+                     .SelectMany(protocol => protocol.Variables)
+                     .Where(protocolVariable => protocolVariable.IsCommunicated))
+        {
+            Func<IProtocolVariable, Task> handler = changedProtocolVariable =>
+            {
+                Interlocked.Exchange(
+                    ref replaySampleTimestampUtcTicks,
+                    changedProtocolVariable.Variable.Timestamp.Ticks);
+                return Task.CompletedTask;
+            };
+
+            protocolVariable.SubscribeAsyncValueChanged(handler);
+            replaySampleTimeSubscriptions.Add((protocolVariable, handler));
+        }
+    }
+
+    private void UnsubscribeReplaySampleTime()
+    {
+        foreach (var subscription in replaySampleTimeSubscriptions)
+        {
+            subscription.ProtocolVariable.UnsubscribeAsyncValueChanged(subscription.Handler);
+        }
+
+        replaySampleTimeSubscriptions.Clear();
+        Interlocked.Exchange(ref replaySampleTimestampUtcTicks, 0);
     }
 
     private void SubscribeProtocolVariableSinkDrivers(
