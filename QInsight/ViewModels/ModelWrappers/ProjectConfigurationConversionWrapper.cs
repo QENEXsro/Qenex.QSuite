@@ -69,6 +69,11 @@ public class ProjectConfigurationConversionWrapper : PropertyChangedBase
         }
     }
 
+    /// <summary>
+    /// A changed type cannot be applied in place (the type is the conversion class), so a new
+    /// instance is created and returned. The caller must then replace the previous instance in
+    /// the project and in every presentation that references it.
+    /// </summary>
     public IValConversion ApplyChanges()
     {
         if (currentState.ConversionType != ConversionState.FromConversion(Conversion).ConversionType)
@@ -136,8 +141,7 @@ public class ProjectConfigurationConversionWrapper : PropertyChangedBase
             "Type",
             () => currentState.ConversionType,
             value => UpdateConversionType(Parse<ConversionsGlobal.ConversionType>(value)),
-            conversionTypeOptions,
-            isReadOnly: !IsNew));
+            conversionTypeOptions));
 
         if (currentState.LinearState != null)
         {

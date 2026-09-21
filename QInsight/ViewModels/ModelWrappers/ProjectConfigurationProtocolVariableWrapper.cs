@@ -18,6 +18,7 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
     private const string DefaultTriggerHysteresis = "0";
     private readonly IEnumerable<ProjectConfigurationProtocolOption> sourceOptions;
     private readonly IEnumerable<IVarEvent> variableEvents;
+    private bool rebuildRequested;
     private readonly Func<IEnumerable<string>>? variableEventOptionsProvider;
     private readonly IEnumerable<ProjectConfigurationScriptWrapper> scripts;
     private ProjectConfigurationProtocolOption originalSource;
@@ -222,9 +223,20 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
         || IsFileLogEnabled != originalIsFileLogEnabled
         || !TriggerSignatures(SnapshotTriggers()).SequenceEqual(TriggerSignatures(originalTriggers));
 
+    /// <summary>
+    /// The referenced event object was replaced (its type changed): the protocol variable holds
+    /// the event object itself, so it must be created again on the next Apply even though
+    /// none of its own fields changed.
+    /// </summary>
+    public void RequestRebuild()
+    {
+        rebuildRequested = true;
+    }
+
     public void ApplyChanges()
     {
-        if (SelectedSource != originalSource
+        if (rebuildRequested
+            || SelectedSource != originalSource
             || CommParam != originalCommParam
             || IsCommunicated != originalIsCommunicated)
         {
@@ -238,6 +250,7 @@ public class ProjectConfigurationProtocolVariableWrapper : PropertyChangedBase
             originalSource.Protocol.RemoveProtocolVariable(ProtocolVariable);
             SelectedSource.Protocol.AddVariable(protocolVariable);
             ProtocolVariable = protocolVariable;
+            rebuildRequested = false;
             OnPropertyChanged(nameof(ProtocolVariable));
         }
 

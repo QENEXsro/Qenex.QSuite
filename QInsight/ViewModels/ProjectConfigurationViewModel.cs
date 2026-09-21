@@ -709,7 +709,12 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         removedVariables.Clear();
         foreach (var conversion in Conversions)
         {
-            conversion.ApplyChanges();
+            var previousConversion = conversion.Conversion;
+            var appliedConversion = conversion.ApplyChanges();
+            if (!ReferenceEquals(previousConversion, appliedConversion))
+            {
+                ReplaceConversionInstance(previousConversion, appliedConversion);
+            }
         }
         foreach (var removedConversion in removedConversions)
         {
@@ -760,7 +765,12 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         SynchronizeRenamedEventReferences();
         foreach (var variableEvent in Events)
         {
-            variableEvent.ApplyChanges();
+            var previousEvent = variableEvent.VariableEvent;
+            var appliedEvent = variableEvent.ApplyChanges();
+            if (!ReferenceEquals(previousEvent, appliedEvent))
+            {
+                ReplaceEventInstance(previousEvent, appliedEvent);
+            }
         }
         foreach (var removedEvent in removedEvents)
         {
@@ -2107,6 +2117,26 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         NotifyHasChangesChanged();
     }
 
+    // A conversion type change produces a new conversion object. It takes the place of the previous
+    // one in the project and every presentation that pointed to the previous object is re-pointed,
+    // otherwise the presentations would keep converting with an object the project no longer holds.
+    private void ReplaceConversionInstance(IValConversion previousConversion, IValConversion appliedConversion)
+    {
+        var index = conversions.IndexOf(previousConversion);
+        if (index >= 0)
+        {
+            conversions[index] = appliedConversion;
+        }
+
+        foreach (var presentation in presentations
+                     .Concat(Presentations.Select(presentation => presentation.Presentation))
+                     .Distinct()
+                     .Where(presentation => ReferenceEquals(presentation.Conversion, previousConversion)))
+        {
+            presentation.Conversion = appliedConversion;
+        }
+    }
+
     private string CreateUniqueConversionName()
     {
         return MakeUniqueConversionName("conversion");
@@ -2155,7 +2185,6 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         var presentation = new Presentation
         {
             Name = CreateUniquePresentationName(),
-            Label = "Presentation",
             Min = 0,
             Max = 1,
             PrintFormat = "{0}",
@@ -2549,6 +2578,24 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             {
                 communicatedVariable.SelectedVariableEventName = variableEvent.Name;
             }
+        }
+    }
+
+    // An event type change produces a new event object. It takes the place of the previous one in
+    // the project; protocol variables hold the event object itself, so those bound to this event
+    // are rebuilt on their Apply (names are already synchronized at this point).
+    private void ReplaceEventInstance(IVarEvent previousEvent, IVarEvent appliedEvent)
+    {
+        var index = variableEvents.IndexOf(previousEvent);
+        if (index >= 0)
+        {
+            variableEvents[index] = appliedEvent;
+        }
+
+        foreach (var communicatedVariable in CommunicatedVariables.Where(communicatedVariable =>
+                     string.Equals(communicatedVariable.SelectedVariableEventName, appliedEvent.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            communicatedVariable.RequestRebuild();
         }
     }
 

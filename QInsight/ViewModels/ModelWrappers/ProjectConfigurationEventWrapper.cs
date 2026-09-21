@@ -43,6 +43,11 @@ public class ProjectConfigurationEventWrapper : PropertyChangedBase
     public ObservableCollection<EditablePropertyWrapper> Properties { get; }
     public bool HasChanges => !currentState.Equals(originalState);
 
+    /// <summary>
+    /// A changed type cannot be applied in place (the type is the event class), so a new
+    /// instance is created and returned. The caller must then replace the previous instance in
+    /// the project and rebuild every protocol variable that references it.
+    /// </summary>
     public IVarEvent ApplyChanges()
     {
         if (currentState.VariableEventType != EventState.FromEvent(VariableEvent).VariableEventType)
@@ -108,8 +113,7 @@ public class ProjectConfigurationEventWrapper : PropertyChangedBase
             "Type",
             () => currentState.VariableEventType,
             value => UpdateEventType(Parse<EventsGlobal.VariableEventType>(value)),
-            eventTypeOptions,
-            isReadOnly: !IsNew));
+            eventTypeOptions));
 
         if (currentState.PeriodicState != null)
         {
