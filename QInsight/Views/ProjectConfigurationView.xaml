@@ -576,26 +576,30 @@
                                                 Visibility="Collapsed"
                                                 ItemsSource="{Binding PrefixOptions}"
                                                 SelectedItem="{Binding PrefixText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                ToolTip="{Binding Error}"/>
+                                                ToolTip="{Binding Error}"
+                                                ToolTipService.IsEnabled="{Binding HasError}"/>
                                             <Grid>
                                                 <q:QTextBox
                                                     x:Name="ValueTextBox"
                                                     Text="{Binding ValueText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                     IsReadOnly="{Binding IsReadOnly}"
-                                                    ToolTip="{Binding Error}"/>
+                                                    ToolTip="{Binding Error}"
+                                                    ToolTipService.IsEnabled="{Binding HasError}"/>
                                                 <!-- Free-form values (e.g. bit mask 0x0F / 15) are committed and
                                                      validated only when the field loses focus. -->
                                                 <q:QTextBox
                                                     x:Name="ValueTextBoxLostFocus"
                                                     Visibility="Collapsed"
                                                     Text="{Binding ValueText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                                    ToolTip="{Binding Error}"/>
+                                                    ToolTip="{Binding Error}"
+                                                    ToolTipService.IsEnabled="{Binding HasError}"/>
                                                 <telerik:RadComboBox
                                                     x:Name="ValueComboBox"
                                                     Visibility="Collapsed"
                                                     ItemsSource="{Binding Options}"
                                                     SelectedItem="{Binding ValueText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                    ToolTip="{Binding Error}"/>
+                                                    ToolTip="{Binding Error}"
+                                                    ToolTipService.IsEnabled="{Binding HasError}"/>
                                             </Grid>
                                         </DockPanel>
                                     </Grid>
