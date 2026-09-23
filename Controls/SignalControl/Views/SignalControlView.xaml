@@ -110,8 +110,10 @@
 		
 		<!-- Read on request: next to the settings arrow, exactly the arrow button's size (20 px high);
 		     shown only for a variable bound to an On Request event -->
+		<!-- Margin top 1 = the expander header's 1 px border above the arrow button, so both
+		     20 px boxes share the same top edge (measured with _Tests/LayoutProbe: delta 0) -->
 		<Button Grid.Row="0" Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
-		        Style="{StaticResource ReadButtonStyle}" Margin="3,0,0,0"
+		        Style="{StaticResource ReadButtonStyle}" Margin="3,1,0,0"
 		        Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
 		        IsEnabled="{Binding CanReadNow}"
 		        Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
