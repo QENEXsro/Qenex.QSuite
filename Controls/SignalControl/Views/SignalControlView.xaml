@@ -22,6 +22,44 @@
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
 			<conv:WriteErrorToBackgroundConverter x:Key="WriteErrorBackground"/>
 			<conv:ReadErrorToBackgroundConverter x:Key="ReadErrorBackground"/>
+			<!-- Read button drawn exactly like the settings arrow button of SquareExpanderStyle
+			     (20 px high box, #888 1 px border, radius 2, transparent) - own template so no
+			     theme style can change its height -->
+			<Style x:Key="ReadButtonStyle" TargetType="Button">
+				<Setter Property="Height" Value="20"/>
+				<Setter Property="MinHeight" Value="0"/>
+				<Setter Property="MinWidth" Value="0"/>
+				<Setter Property="Padding" Value="6,0"/>
+				<Setter Property="Foreground" Value="#999"/>
+				<Setter Property="Background" Value="Transparent"/>
+				<Setter Property="VerticalAlignment" Value="Top"/>
+				<Setter Property="Template">
+					<Setter.Value>
+						<ControlTemplate TargetType="Button">
+							<Border x:Name="ButtonBorder"
+							        Background="{TemplateBinding Background}"
+							        BorderBrush="#888"
+							        BorderThickness="1"
+							        CornerRadius="2"
+							        Padding="{TemplateBinding Padding}"
+							        SnapsToDevicePixels="True">
+								<ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+							</Border>
+							<ControlTemplate.Triggers>
+								<Trigger Property="IsMouseOver" Value="True">
+									<Setter TargetName="ButtonBorder" Property="Background" Value="#22888888"/>
+								</Trigger>
+								<Trigger Property="IsPressed" Value="True">
+									<Setter TargetName="ButtonBorder" Property="Background" Value="#44888888"/>
+								</Trigger>
+								<Trigger Property="IsEnabled" Value="False">
+									<Setter Property="Opacity" Value="0.4"/>
+								</Trigger>
+							</ControlTemplate.Triggers>
+						</ControlTemplate>
+					</Setter.Value>
+				</Setter>
+			</Style>
 		</ResourceDictionary>
 	</UserControl.Resources>
 
@@ -72,12 +110,12 @@
 		
 		<!-- Read on request: next to the settings arrow, exactly the arrow button's size (20 px high);
 		     shown only for a variable bound to an On Request event -->
-		<telerik:RadButton Grid.Row="0" Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
-		                   Height="20" MinHeight="0" Padding="6,0" Margin="3,0,0,0"
-		                   VerticalAlignment="Top" VerticalContentAlignment="Center"
-		                   IsEnabled="{Binding CanReadNow}"
-		                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
-		                   ToolTip="Read the value from the device once (On Request event)"/>
+		<Button Grid.Row="0" Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
+		        Style="{StaticResource ReadButtonStyle}" Margin="3,0,0,0"
+		        Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
+		        IsEnabled="{Binding CanReadNow}"
+		        Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
+		        ToolTip="Read the value from the device once (On Request event)"/>
 
 		<q:QTextBlock Grid.Row="0" Grid.Column="2" Text="{Binding VariableLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 		              Margin="5,0,0,3" TextWrapping="NoWrap" HorizontalAlignment="Left"/>
