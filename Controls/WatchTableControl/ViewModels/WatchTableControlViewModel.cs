@@ -18,7 +18,7 @@ using Microsoft.Win32;
 namespace Qenex.QSuite.Controls.WatchTableControl.ViewModels;
 
 [DataContract]
-public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
+public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IVariableReadControl
 {
 	public WatchTableControlViewModel()
 	{
@@ -58,6 +58,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 	private bool? isUnitColumnVisible;
 	private bool? isTimeColumnVisible;
 	private bool? isWriteColumnVisible;
+	private bool? isReadColumnVisible;
 
 	[IgnoreDataMember]
 	public bool IsNameColumnVisible
@@ -92,6 +93,13 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 	{
 		get => isWriteColumnVisible ?? true;
 		set { isWriteColumnVisible = value; OnPropertyChanged(); }
+	}
+
+	[IgnoreDataMember]
+	public bool IsReadColumnVisible
+	{
+		get => isReadColumnVisible ?? true;
+		set { isReadColumnVisible = value; OnPropertyChanged(); }
 	}
 
 	[DataMember]
@@ -229,6 +237,62 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 
 	#endregion
 
+	#region Read on request (IVariableReadControl, per row)
+
+	[IgnoreDataMember]
+	public Func<IVariableBase, bool>? CanReadVariableProvider { get; set; }
+
+	[IgnoreDataMember]
+	public Func<IVariableBase, Task<bool>>? ReadVariableAsync { get; set; }
+
+	public void RefreshReadCapability()
+	{
+		foreach (var row in Rows)
+		{
+			RefreshRowReadCapability(row);
+		}
+	}
+
+	private void RefreshRowReadCapability(WatchRow row)
+	{
+		// Only a variable bound to an On Request event is readable on request (the protocol
+		// decides through the host provider); periodically polled rows keep Read disabled.
+		var variable = FindVariable(row.Reference);
+		row.CanRead = variable != null && (CanReadVariableProvider?.Invoke(variable) ?? false);
+	}
+
+	private async Task ReadRowAsync(WatchRow row)
+	{
+		// Reads go to the device only in the Run mode (outside Run the command drivers are not
+		// subscribed, so there is nobody to serve the request).
+		var variable = FindVariable(row.Reference);
+		if (!row.CanReadNow || !IsRun || ReadVariableAsync == null || variable == null)
+		{
+			row.IsReadError = true;
+			return;
+		}
+
+		row.IsReadBusy = true;
+		try
+		{
+			// The value arrives through UpdateVariableValueAsync during the read; reset the
+			// row throttle so it is shown even when the last refresh was a moment ago.
+			row.LastUpdate = DateTime.MinValue;
+			var read = await ReadVariableAsync(variable);
+			row.IsReadError = !read;
+		}
+		catch
+		{
+			row.IsReadError = true;
+		}
+		finally
+		{
+			row.IsReadBusy = false;
+		}
+	}
+
+	#endregion
+
 	#region Derived properties
 
 	public override string ControlName => "WatchTableControl";
@@ -271,13 +335,15 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 			Unit = protVariable is ScalarVariable scalar ? scalar.Values.ValPresentation.Unit : string.Empty,
 			// Restore the persisted per-row write mode before the change handler is attached.
 			IsWriteMode = WriteModeReferences.Contains(reference),
-			WriteRequested = r => _ = WriteRowAsync(r)
+			WriteRequested = r => _ = WriteRowAsync(r),
+			ReadRequested = r => _ = ReadRowAsync(r)
 		};
 		row.PropertyChanged += OnRowPropertyChanged;
 		Rows.Add(row);
 
-		// Writability must be re-evaluated on every (re)bind.
+		// Writability and on-request readability must be re-evaluated on every (re)bind.
 		RefreshRowWriteCapability(row);
+		RefreshRowReadCapability(row);
 		if (row.IsWriteActive)
 		{
 			PrefillEditValue(row);
@@ -295,6 +361,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 
 		row.Name = variable.Label;
 		row.Unit = variable is ScalarVariable scalar ? scalar.Values.ValPresentation.Unit : string.Empty;
+		RefreshRowReadCapability(row);
 	}
 
 	public override async Task UpdateVariableValueAsync(IVariableBase protVariable)
@@ -326,6 +393,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 		{
 			row.Value = raw;
 			row.Time = timestamp;
+			row.IsReadError = false;
 		});
 	}
 

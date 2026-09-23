@@ -85,6 +85,10 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
     /// <summary>Injektuje Shell: protokolova capability zapisu pro protocol variable.</summary>
     public Func<IProtocolVariable, bool>? CanWriteProtocolVariable { get; set; }
 
+    /// <summary>Host-provided: true when a running-capable protocol can read the variable on
+    /// request (On Request event). Mirror of CanWriteProtocolVariable.</summary>
+    public Func<IProtocolVariable, bool>? CanReadProtocolVariable { get; set; }
+
     #endregion
     
     #region ViewModelBase implementation
@@ -316,6 +320,41 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 
 		    writeControl.RefreshWriteCapability();
 	    }
+
+	    if (controlVm is IVariableReadControl readControl)
+	    {
+		    readControl.CanReadVariableProvider = variable =>
+			    ResolveProtocolVariable(variable) is { } protocolVariable
+			    && (CanReadProtocolVariable?.Invoke(protocolVariable) ?? false);
+		    readControl.ReadVariableAsync = ReadControlVariableAsync;
+		    readControl.RefreshReadCapability();
+	    }
+    }
+
+    /// <summary>
+    /// On-request read from a control: the read-requested notification goes through the module's
+    /// command-driver wiring to the owning protocol (IProtocolVariableReadProtocol), which reads
+    /// the device once and applies the value like a poll (value-changed → all controls). Returns
+    /// false on any failure; the protocol has already logged the reason.
+    /// </summary>
+    private async Task<bool> ReadControlVariableAsync(IVariableBase variable)
+    {
+	    var protocolVariable = ResolveProtocolVariable(variable);
+	    if (protocolVariable == null || CanReadProtocolVariable?.Invoke(protocolVariable) != true)
+	    {
+		    return false;
+	    }
+
+	    try
+	    {
+		    await protocolVariable.RequestReadAsync();
+		    return true;
+	    }
+	    catch (Exception e)
+	    {
+		    EventAggregator.Publish(new LogMessage(LogLevel.Warn, $"Read of '{variable.Name}' failed: {e.Message}"));
+		    return false;
+	    }
     }
 
     /// <summary>
@@ -399,6 +438,7 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 		    }
 
 		    (control as IVariableWriteControl)?.RefreshWriteCapability();
+		    (control as IVariableReadControl)?.RefreshReadCapability();
 	    }
     }
 
@@ -549,6 +589,9 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 	    {
 		    control.RefreshVariableBinding(variable);
 		    SynchronizeSavedVariableBindings(control);
+		    // The event binding (periodic ↔ On Request) may have changed with the configuration.
+		    (control as IVariableWriteControl)?.RefreshWriteCapability();
+		    (control as IVariableReadControl)?.RefreshReadCapability();
 	    }
     }
 
@@ -993,6 +1036,7 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 	    PruneControlSubscriptions(control);
 	    SubscribeControlVariable(control, protocolVariable);
 	    (control as IVariableWriteControl)?.RefreshWriteCapability();
+	    (control as IVariableReadControl)?.RefreshReadCapability();
 
 	    VariableDragAndDropBehavior.IsOverValidTarget = false;
 	    e.Handled = true;

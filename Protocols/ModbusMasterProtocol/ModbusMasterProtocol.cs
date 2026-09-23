@@ -22,7 +22,8 @@ namespace Qenex.QSuite.Protocols.ModbusMaster;
 /// agnostic: raw chunks in via AddReceivedDataToQueueAsync, framed requests out via the
 /// transmitter injected by the hosting driver.
 /// </summary>
-public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byte[]>, IProtocolVariableWriteProtocol
+public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byte[]>, IProtocolVariableWriteProtocol,
+    IProtocolVariableReadProtocol
 {
     private const int SchedulerIdleMs = 50;
     // On a plain Disconnect the driver reports the transport down a moment before it stops this
@@ -383,6 +384,13 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
             }
 
             var variable = modbusVariable.Variable;
+            if (spec.VariableEvent is OnRequestVarEvent)
+            {
+                // Read only on request (IProtocolVariableReadProtocol) — never polled.
+                Logger?.Log(LogLevel.Debug, $"Modbus master: variable '{variable.Name}' is read on request; not polled.");
+                continue;
+            }
+
             if (spec.VariableEvent is not PeriodicVarEvent periodicEvent)
             {
                 Logger?.Log(LogLevel.Warn,
@@ -519,6 +527,70 @@ public class ModbusMasterProtocol : ProtocolBase<byte[]>, ITransportProtocol<byt
             SetState(CommunicationState.Running, $"Write of '{scalarVariable.Name}' failed: {e.Message}");
         }
     }
+
+    #region On-request reads (IProtocolVariableReadProtocol)
+
+    /// <summary>Readable on request = a read/readWrite scalar or matrix bound to an On Request event.</summary>
+    public bool CanReadVariable(IProtocolVariable protocolVariable)
+    {
+        return Variables.Contains(protocolVariable) &&
+               protocolVariable.IsCommunicated &&
+               protocolVariable is ModbusProtocolVariable { Variable: ScalarVariable or MatrixVariable } &&
+               protocolVariable.ProtocolVariableSpecification is ModbusVariableSpecification
+               {
+                   Direction: CommDirection.Read or CommDirection.ReadWrite,
+                   VariableEvent: OnRequestVarEvent
+               };
+    }
+
+    /// <summary>
+    /// One read transaction of the variable (registers, bits or the whole matrix block), exactly
+    /// what a poll cycle does; the engine's request lock queues it behind the transaction in
+    /// progress. Failures are logged and rethrown so the requesting control can report them.
+    /// </summary>
+    public async Task ReadVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        if (!CanReadVariable(protocolVariable) ||
+            protocolVariable is not ModbusProtocolVariable modbusVariable ||
+            modbusVariable.ProtocolVariableSpecification is not ModbusVariableSpecification spec)
+        {
+            throw new InvalidOperationException(
+                $"Modbus master: variable '{protocolVariable.Variable?.Name}' is not readable on request.");
+        }
+
+        if (engine == null || State != CommunicationState.Running || !transportConnected)
+        {
+            var message = $"Read of '{modbusVariable.Variable.Name}' skipped — protocol not running or transport down.";
+            Logger?.Log(LogLevel.Warn, $"Modbus master: {message}");
+            throw new ModbusProtocolException(message);
+        }
+
+        var entry = new PollEntry
+        {
+            ProtocolVariable = modbusVariable,
+            Spec = spec,
+            Variable = modbusVariable.Variable,
+            IntervalMs = 0
+        };
+
+        try
+        {
+            await PollVariableAsync(entry, ct);
+            Logger?.Log(LogLevel.Debug, $"Modbus master: read '{entry.Variable.Name}' on request.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception e)
+        {
+            Logger?.Log(LogLevel.Warn, $"Modbus master: read of '{entry.Variable.Name}' failed: {e.Message}");
+            SetState(CommunicationState.Running, $"Read of '{entry.Variable.Name}' failed: {e.Message}");
+            throw;
+        }
+    }
+
+    #endregion
 
     /// <summary>
     /// Drains the pending element writes of a matrix variable. Each request writes only the

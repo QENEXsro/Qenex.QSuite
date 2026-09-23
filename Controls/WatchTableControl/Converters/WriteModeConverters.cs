@@ -5,6 +5,28 @@ using System.Windows.Media;
 
 namespace Qenex.QSuite.Controls.WatchTableControl.Converters;
 
+/// <summary>
+/// Background of a row's value after a failed on-request read (On Request event): red tint,
+/// otherwise unchanged (UnsetValue keeps the theme style).
+/// </summary>
+public class ReadErrorToBackgroundConverter : IValueConverter
+{
+    private static readonly Brush ErrorBrush = CreateFrozen(0x55, 0xFF, 0x00, 0x00);
+
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is true ? ErrorBrush : DependencyProperty.UnsetValue;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+
+    private static Brush CreateFrozen(byte a, byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+}
+
 /// <summary>Inverse BooleanToVisibilityConverter: true -> Collapsed.</summary>
 public class TrueToCollapsedConverter : IValueConverter
 {

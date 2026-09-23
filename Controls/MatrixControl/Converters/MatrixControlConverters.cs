@@ -31,6 +31,26 @@ public class EmptyToCollapsedConverter : IValueConverter
 /// aby platilo pozadi z implicitniho theme stylu QTextBoxu (dark/light) — lokalni
 /// hodnota by ho jinak trvale prebila. Polopruhledne barvy funguji nad obema tematy.
 /// </summary>
+/// <summary>Background of the Read button after a failed on-request read: red tint, otherwise
+/// unchanged (UnsetValue keeps the theme style).</summary>
+public class ReadErrorToBackgroundConverter : IValueConverter
+{
+    private static readonly Brush ErrorBrush = CreateFrozen(0x55, 0xFF, 0x00, 0x00);
+
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is true ? ErrorBrush : DependencyProperty.UnsetValue;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+
+    private static Brush CreateFrozen(byte a, byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+}
+
 public class CellStateToBackgroundConverter : IMultiValueConverter
 {
     private static readonly Brush DirtyBrush = CreateFrozen(0x55, 0xFF, 0xD7, 0x00);

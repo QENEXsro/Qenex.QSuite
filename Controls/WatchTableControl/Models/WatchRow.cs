@@ -55,6 +55,36 @@ public sealed class WatchRow : INotifyPropertyChanged
 
 	#endregion
 
+	#region Read on request (per row)
+
+	/// <summary>Set by the view model: reads this row's variable from the device once.</summary>
+	public Action<WatchRow>? ReadRequested { get; set; }
+
+	/// <summary>Read-on-request capability of the bound variable (On Request event, decided by the
+	/// protocol via the host provider); re-evaluated on every (re)bind by RefreshReadCapability.
+	/// Periodically polled rows keep Read disabled.</summary>
+	public bool CanRead
+	{
+		get;
+		set { field = value; OnChanged(); OnChanged(nameof(CanReadNow)); ReadCommand.OnCanExecuteChanged(); }
+	}
+
+	public bool IsReadBusy
+	{
+		get;
+		set { field = value; OnChanged(); OnChanged(nameof(CanReadNow)); ReadCommand.OnCanExecuteChanged(); }
+	}
+
+	public bool CanReadNow => CanRead && !IsReadBusy;
+
+	/// <summary>Last on-request read of this row failed; cleared by the next value update.</summary>
+	public bool IsReadError { get; set { field = value; OnChanged(); } }
+
+	public RelayCommand<object> ReadCommand =>
+		field ??= new RelayCommand<object>(_ => ReadRequested?.Invoke(this), _ => CanReadNow);
+
+	#endregion
+
 	public event PropertyChangedEventHandler? PropertyChanged;
 
 	private void OnChanged([CallerMemberName] string? propertyName = null)

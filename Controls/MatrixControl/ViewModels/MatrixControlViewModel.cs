@@ -18,7 +18,7 @@ namespace Qenex.QSuite.Controls.MatrixControl.ViewModels;
 /// (Auto read) or refreshes only on the Read button.
 /// </summary>
 [DataContract]
-public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
+public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, IVariableReadControl
 {
     private DateTime previousUpdateTime = DateTime.MinValue;
 
@@ -148,13 +148,108 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
     [IgnoreDataMember]
     public RelayCommand<object> WriteDirtyCommand => field ??= new RelayCommand<object>(_ => _ = WriteDirtyCellsAsync());
 
-    [IgnoreDataMember]
-    public RelayCommand<object> ReadCommand => field ??= new RelayCommand<object>(_ => RefreshFromVariable());
-
     public void RefreshWriteCapability()
     {
         var variable = Variables?.FirstOrDefault();
         CanWrite = variable != null && (CanWriteVariableProvider?.Invoke(variable) ?? false);
+    }
+
+    #endregion
+
+    #region Read on request (IVariableReadControl)
+
+    [IgnoreDataMember]
+    public Func<IVariableBase, bool>? CanReadVariableProvider { get; set; }
+
+    [IgnoreDataMember]
+    public Func<IVariableBase, Task<bool>>? ReadVariableAsync { get; set; }
+
+    /// <summary>True only for a matrix bound to an On Request event (decided by the protocol
+    /// through the host provider). The Read button asks the device for one read; for a
+    /// periodically polled matrix it stays disabled (decision of Radek 2026-09-23).</summary>
+    [IgnoreDataMember]
+    public bool CanRead
+    {
+        get;
+        private set
+        {
+            field = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanReadNow));
+            OnPropertyChanged(nameof(IsAutoReadApplicable));
+            ReadCommand.OnCanExecuteChanged();
+        }
+    }
+
+    [IgnoreDataMember]
+    public bool IsReadBusy
+    {
+        get;
+        private set
+        {
+            field = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanReadNow));
+            ReadCommand.OnCanExecuteChanged();
+        }
+    }
+
+    [IgnoreDataMember]
+    public bool CanReadNow => CanRead && !IsReadBusy;
+
+    /// <summary>Auto read applies only to a periodically updated matrix; for one read on request
+    /// the tick has no meaning.</summary>
+    [IgnoreDataMember]
+    public bool IsAutoReadApplicable => !CanRead;
+
+    /// <summary>Last on-request read failed (timeout, device error, not running); cleared by the
+    /// next successful read or bus update.</summary>
+    [IgnoreDataMember]
+    public bool IsReadError { get; private set { field = value; OnPropertyChanged(); } }
+
+    // Lazy kvuli deserializaci (DataContractSerializer nevola konstruktor)
+    [IgnoreDataMember]
+    public RelayCommand<object> ReadCommand => field ??= new RelayCommand<object>(_ => _ = ReadFromDeviceAsync(), _ => CanReadNow);
+
+    public void RefreshReadCapability()
+    {
+        var variable = Variables?.FirstOrDefault();
+        CanRead = variable != null && (CanReadVariableProvider?.Invoke(variable) ?? false);
+    }
+
+    /// <summary>
+    /// Read button: one read of the matrix from the device (On Request event). On success the
+    /// table is re-rendered from the variable regardless of Auto read / write mode — an explicit
+    /// Read means the user wants the fresh data (pending edits are discarded, as before).
+    /// </summary>
+    private async Task ReadFromDeviceAsync()
+    {
+        if (!CanReadNow || !IsRun || ReadVariableAsync == null ||
+            Variables?.FirstOrDefault() is not MatrixVariable matrixVariable)
+        {
+            IsReadError = true;
+            return;
+        }
+
+        IsReadBusy = true;
+        try
+        {
+            var read = await ReadVariableAsync(matrixVariable);
+            IsReadError = !read;
+            if (read)
+            {
+                previousUpdateTime = DateTime.MinValue;
+                _ = Application.Current.Dispatcher.BeginInvoke(RefreshFromVariable);
+            }
+        }
+        catch
+        {
+            IsReadError = true;
+        }
+        finally
+        {
+            IsReadBusy = false;
+        }
     }
 
     internal void OnCellDirtyChanged()
@@ -274,7 +369,11 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
 
         previousUpdateTime = protVariable.Timestamp;
 
-        _ = Application.Current.Dispatcher.BeginInvoke(() => ApplyVariable(matrixVariable));
+        _ = Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            ApplyVariable(matrixVariable);
+            IsReadError = false;
+        });
     }
 
     // Tabulka zobrazuje vyhradne matrix promenne (skalary patri Signal/Gauge/WatchTable)
@@ -299,8 +398,10 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
         RebuildGrid();
         RefreshFromVariable();
 
-        // Zapisovatelnost se musi prehodnotit pri kazdem (re)bindu
+        // Zapisovatelnost i citelnost na vyzadani se musi prehodnotit pri kazdem (re)bindu
         RefreshWriteCapability();
+        RefreshReadCapability();
+        IsReadError = false;
         if (IsWriteMode)
         {
             PrefillEditTexts();
@@ -320,6 +421,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
         ApplyHeader(variable);
         RebuildGrid();
         RefreshFromVariable();
+        RefreshReadCapability();
     }
 
     protected override void OnEditToRun()

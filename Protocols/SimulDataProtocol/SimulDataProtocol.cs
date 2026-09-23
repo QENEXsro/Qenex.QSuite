@@ -21,11 +21,13 @@ namespace Qenex.QSuite.Protocols.SimulDataProtocol;
 /// "thermal" signal is generated as a whole table (axes + data) and, with direction="readWrite",
 /// its cells can be edited from the Matrix control (the edit lands in the raw buffer directly).
 /// </summary>
-public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtocol
+public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtocol, IProtocolVariableReadProtocol
 {
     private const int SchedulerIdleMs = 50;
 
     private volatile bool exitRequested;
+    private Stopwatch? generatorClock;
+    private Dictionary<IProtocolVariable, PollEntry>? onRequestEntries;
     private CancellationTokenSource? runCts;
     private Task? runTask;
 
@@ -213,17 +215,24 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
         try
         {
             await ApplyParameterInitialValuesAsync();
+            var clock = Stopwatch.StartNew();
+            generatorClock = clock;
             var entries = BuildPollEntries();
-            SetState(CommunicationState.Running, $"Simulation: generating {entries.Count} signal(s).");
+            var onRequestCount = onRequestEntries?.Count ?? 0;
+            SetState(CommunicationState.Running,
+                $"Simulation: generating {entries.Count} signal(s)" +
+                (onRequestCount > 0 ? $", {onRequestCount} on request." : "."));
 
             if (entries.Count == 0)
             {
-                Logger?.Log(LogLevel.Warn, "Simulation: no variables with a periodic event; nothing to generate.");
+                if (onRequestCount == 0)
+                {
+                    Logger?.Log(LogLevel.Warn, "Simulation: no variables with a periodic event; nothing to generate.");
+                }
+
                 await Task.Delay(Timeout.Infinite, ct);
                 return;
             }
-
-            var clock = Stopwatch.StartNew();
             while (!ct.IsCancellationRequested && !exitRequested)
             {
                 var now = Environment.TickCount64;
@@ -276,6 +285,8 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
     private List<PollEntry> BuildPollEntries()
     {
         var entries = new List<PollEntry>();
+        var onRequest = new Dictionary<IProtocolVariable, PollEntry>();
+        onRequestEntries = onRequest;
         var now = Environment.TickCount64;
         var parameterProvider = BuildParameterProvider();
 
@@ -303,19 +314,26 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                 continue;
             }
 
-            if (spec.VariableEvent is not PeriodicVarEvent periodicEvent)
+            // On Request event: one sample per explicit read request (IProtocolVariableReadProtocol),
+            // never generated periodically.
+            var isOnRequest = spec.VariableEvent is OnRequestVarEvent;
+            long intervalMs = 0;
+            if (!isOnRequest)
             {
-                Logger?.Log(LogLevel.Warn,
-                    $"Simulation: variable '{simulVariable.Variable.Name}' has no periodic event ('{spec.VariableEvent?.Name}'); not generated.");
-                continue;
-            }
+                if (spec.VariableEvent is not PeriodicVarEvent periodicEvent)
+                {
+                    Logger?.Log(LogLevel.Warn,
+                        $"Simulation: variable '{simulVariable.Variable.Name}' has no periodic event ('{spec.VariableEvent?.Name}'); not generated.");
+                    continue;
+                }
 
-            var intervalMs = (long)periodicEvent.Period * (int)periodicEvent.Unit;
-            if (intervalMs <= 0)
-            {
-                Logger?.Log(LogLevel.Warn,
-                    $"Simulation: variable '{simulVariable.Variable.Name}' has a non-positive period; not generated.");
-                continue;
+                intervalMs = (long)periodicEvent.Period * (int)periodicEvent.Unit;
+                if (intervalMs <= 0)
+                {
+                    Logger?.Log(LogLevel.Warn,
+                        $"Simulation: variable '{simulVariable.Variable.Name}' has a non-positive period; not generated.");
+                    continue;
+                }
             }
 
             var settings = new SimulSignalSettings(spec.Amp, spec.Freq, spec.Nonlin, parameterProvider);
@@ -332,14 +350,23 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                     }
 
                     var signal = SimulSignalCatalog.Create(ResolveSignalKey(spec, scalarVariable), settings);
-                    entries.Add(new PollEntry
+                    var scalarEntry = new PollEntry
                     {
                         ProtocolVariable = simulVariable,
                         Variable = scalarVariable,
                         Generate = t => SetSampleValue(scalarVariable, signal.Next(t)),
                         IntervalMs = intervalMs,
                         NextDueMs = now
-                    });
+                    };
+                    if (isOnRequest)
+                    {
+                        onRequest[simulVariable] = scalarEntry;
+                    }
+                    else
+                    {
+                        entries.Add(scalarEntry);
+                    }
+
                     break;
                 }
 
@@ -362,7 +389,7 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                     }
 
                     var matrixSignal = SimulSignalCatalog.CreateMatrix(spec.Signal, settings);
-                    entries.Add(new PollEntry
+                    var matrixEntry = new PollEntry
                     {
                         ProtocolVariable = simulVariable,
                         Variable = matrixVariable,
@@ -370,7 +397,16 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                         IsHeld = () => (parameterProvider?.Invoke(SimulSignalCatalog.HoldParamKey) ?? 0.0) != 0.0,
                         IntervalMs = intervalMs,
                         NextDueMs = now
-                    });
+                    };
+                    if (isOnRequest)
+                    {
+                        onRequest[simulVariable] = matrixEntry;
+                    }
+                    else
+                    {
+                        entries.Add(matrixEntry);
+                    }
+
                     break;
                 }
 
@@ -563,6 +599,63 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
         }
 
         return Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region IProtocolVariableReadProtocol (On Request event)
+
+    /// <summary>
+    /// Readable on request = a generated variable (readable scalar signal or matrix; parameters are
+    /// never generated) bound to an On Request event. Decided from the configuration alone so the
+    /// host can enable the Read action before the protocol runs.
+    /// </summary>
+    public bool CanReadVariable(IProtocolVariable protocolVariable)
+    {
+        if (!Variables.Contains(protocolVariable)
+            || !protocolVariable.IsCommunicated
+            || protocolVariable is not SimulDataProtocolVariable simulVariable
+            || simulVariable.ProtocolVariableSpecification is not SimulDataProtocolVariableSpecification
+            {
+                VariableEvent: OnRequestVarEvent
+            } spec
+            || SimulSignalCatalog.IsParameterKey(spec.Signal))
+        {
+            return false;
+        }
+
+        return simulVariable.Variable switch
+        {
+            ScalarVariable scalar => spec.Direction == CommDirection.Read && SupportsValues(scalar),
+            MatrixVariable matrix => spec.Direction != CommDirection.Write && SimulSignalCatalog.IsMatrixKey(spec.Signal)
+                                     && matrix.ValidateLayout() == null,
+            _ => false
+        };
+    }
+
+    /// <summary>Generates one sample (scalar) or one table (matrix) for the current generator time
+    /// and notifies the variable — the on-request counterpart of a generation cycle.</summary>
+    public async Task ReadVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        if (!CanReadVariable(protocolVariable))
+        {
+            throw new InvalidOperationException(
+                $"Simulation: variable '{protocolVariable.Variable?.Name}' is not readable on request.");
+        }
+
+        var entries = onRequestEntries;
+        if (State != CommunicationState.Running || entries == null || !entries.TryGetValue(protocolVariable, out var entry))
+        {
+            var message = $"Read of '{protocolVariable.Variable?.Name}' skipped — simulation not running.";
+            Logger?.Log(LogLevel.Warn, $"Simulation: {message}");
+            throw new InvalidOperationException(message);
+        }
+
+        ct.ThrowIfCancellationRequested();
+        entry.Generate(generatorClock?.Elapsed.TotalSeconds ?? 0.0);
+        entry.Variable.Timestamp = DateTime.UtcNow;
+        await entry.ProtocolVariable.NotifyValueChangedAsync();
+        Logger?.Log(LogLevel.Debug, $"Simulation: read '{entry.Variable.Name}' on request.");
     }
 
     #endregion

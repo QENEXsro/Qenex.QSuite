@@ -24,6 +24,7 @@
 			<BooleanToVisibilityConverter x:Key="TrueToVisible"/>
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
 			<conv:WriteErrorToBackgroundConverter x:Key="WriteErrorBackground"/>
+			<conv:ReadErrorToBackgroundConverter x:Key="ReadErrorBackground"/>
 		</ResourceDictionary>
 	</UserControl.Resources>
 
@@ -41,6 +42,8 @@
 				                     IsChecked="{Binding IsTimeColumnVisible, Mode=TwoWay}"/>
 				<telerik:RadMenuItem Header="Write" IsCheckable="True" StaysOpenOnClick="True"
 				                     IsChecked="{Binding IsWriteColumnVisible, Mode=TwoWay}"/>
+				<telerik:RadMenuItem Header="Read" IsCheckable="True" StaysOpenOnClick="True"
+				                     IsChecked="{Binding IsReadColumnVisible, Mode=TwoWay}"/>
 			</telerik:RadMenuItem>
 			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 		</telerik:RadContextMenu>
@@ -101,6 +104,7 @@
 						<DataTemplate>
 							<Grid>
 								<TextBlock Text="{Binding Value}" TextAlignment="Right"
+								           Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
 								           Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToCollapsed}}"/>
 								<!-- No local Style: it would override the implicit QTextBox theme style
 								     registered in ShellWindow.Resources (theme colors). -->
@@ -130,6 +134,18 @@
 							          IsEnabled="{Binding CanWrite}"
 							          HorizontalAlignment="Center" VerticalAlignment="Center"
 							          ToolTip="Write mode for this row (available only when the protocol allows writing this variable)"/>
+						</DataTemplate>
+					</telerik:GridViewDataColumn.CellTemplate>
+				</telerik:GridViewDataColumn>
+				<telerik:GridViewDataColumn UniqueName="Read" Header="Read" Width="Auto" IsSortable="False"
+				                            IsVisible="{Binding Data.IsReadColumnVisible, Source={StaticResource RootProxy}, Mode=TwoWay}">
+					<telerik:GridViewDataColumn.CellTemplate>
+						<DataTemplate>
+							<!-- Per-row read on request; enabled only for a variable bound to an On Request event -->
+							<telerik:RadButton Content="Read" Command="{Binding ReadCommand}" Padding="6,0"
+							                   IsEnabled="{Binding CanReadNow}"
+							                   HorizontalAlignment="Center" VerticalAlignment="Center"
+							                   ToolTip="Read this variable from the device once (available only for an On Request event)"/>
 						</DataTemplate>
 					</telerik:GridViewDataColumn.CellTemplate>
 				</telerik:GridViewDataColumn>

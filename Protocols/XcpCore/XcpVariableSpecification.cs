@@ -48,6 +48,10 @@ public class XcpVariableSpecification : ProtVariableSpecification
     /// then streamed to the ECU as STIM DTOs instead of being written via SET_MTA + DOWNLOAD.</summary>
     public bool IsStimEvent { get; init; }
 
+    /// <summary>True when the bound event is an On Request event: the variable is neither polled
+    /// nor acquired via DAQ — it is read only on an explicit request (IProtocolVariableReadProtocol).</summary>
+    public bool IsOnRequestEvent => VariableEvent is OnRequestVarEvent;
+
     /// <summary>Reserved for the staged engineering-value write phase; not applied yet.</summary>
     public int Multiplier { get; init; } = 1;
 

@@ -10,7 +10,7 @@ using Qenex.QSuite.Variables.QVariables;
 namespace Qenex.QSuite.Controls.SignalControl.ViewModels;
 
 [DataContract]
-public class SignalControlViewModel : ControlBase, IVariableWriteControl, ISampleHistoryControl
+public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVariableReadControl, ISampleHistoryControl
 {
 	private DateTime previousUpdateTime = DateTime.MinValue;
 	private double prevValue;
@@ -171,6 +171,90 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, ISampl
 
     #endregion
 
+    #region Read on request (IVariableReadControl)
+
+    [IgnoreDataMember]
+    public Func<IVariableBase, bool>? CanReadVariableProvider { get; set; }
+
+    [IgnoreDataMember]
+    public Func<IVariableBase, Task<bool>>? ReadVariableAsync { get; set; }
+
+    /// <summary>True only for a variable bound to an On Request event (decided by the protocol
+    /// through the host provider); periodically polled variables keep Read disabled.</summary>
+    [IgnoreDataMember]
+    public bool CanRead
+    {
+	    get;
+	    private set
+	    {
+		    field = value;
+		    OnPropertyChanged();
+		    OnPropertyChanged(nameof(CanReadNow));
+		    ReadCommand.OnCanExecuteChanged();
+	    }
+    }
+
+    [IgnoreDataMember]
+    public bool IsReadBusy
+    {
+	    get;
+	    private set
+	    {
+		    field = value;
+		    OnPropertyChanged();
+		    OnPropertyChanged(nameof(CanReadNow));
+		    ReadCommand.OnCanExecuteChanged();
+	    }
+    }
+
+    [IgnoreDataMember]
+    public bool CanReadNow => CanRead && !IsReadBusy;
+
+    /// <summary>Last on-request read failed (timeout, device error, not running); cleared by the
+    /// next successful read or value update.</summary>
+    [IgnoreDataMember]
+    public bool IsReadError { get; private set { field = value; OnPropertyChanged(); } }
+
+    // Lazy kvuli deserializaci (DataContractSerializer nevola konstruktor)
+    [IgnoreDataMember]
+    public RelayCommand<object> ReadCommand => field ??= new RelayCommand<object>(_ => _ = ReadValueAsync(), _ => CanReadNow);
+
+    public void RefreshReadCapability()
+    {
+	    var variable = Variables?.FirstOrDefault();
+	    CanRead = variable != null && (CanReadVariableProvider?.Invoke(variable) ?? false);
+    }
+
+    private async Task ReadValueAsync()
+    {
+	    var variable = Variables?.FirstOrDefault();
+	    if (!CanReadNow || !IsRun || ReadVariableAsync == null || variable == null)
+	    {
+		    IsReadError = true;
+		    return;
+	    }
+
+	    IsReadBusy = true;
+	    try
+	    {
+		    // The value arrives through UpdateVariableValueAsync during the read; reset the
+		    // throttle so it is shown even when the last refresh was a moment ago.
+		    previousUpdateTime = DateTime.MinValue;
+		    var read = await ReadVariableAsync(variable);
+		    IsReadError = !read;
+	    }
+	    catch
+	    {
+		    IsReadError = true;
+	    }
+	    finally
+	    {
+		    IsReadBusy = false;
+	    }
+    }
+
+    #endregion
+
     #region Derived properties
 
     public override string ControlName => "SignalControl";
@@ -217,6 +301,7 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, ISampl
 	    _ = Application.Current.Dispatcher.BeginInvoke(() =>
 	    {
 		    VariableValue = dataValue;
+		    IsReadError = false;
 	    });
 
     }
@@ -256,8 +341,10 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, ISampl
 	    previousUpdateTime = DateTime.MinValue;
 	    prevValue = 0;
 
-	    // Zapisovatelnost se musi prehodnotit pri kazdem (re)bindu
+	    // Zapisovatelnost i citelnost na vyzadani se musi prehodnotit pri kazdem (re)bindu
 	    RefreshWriteCapability();
+	    RefreshReadCapability();
+	    IsReadError = false;
 	    if (IsWriteMode)
 	    {
 		    PrefillEditValue();
@@ -277,6 +364,7 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, ISampl
 	    VariableUnit = variable is ScalarVariable scalarVariable
 		    ? scalarVariable.Values.ValPresentation.Unit
 		    : string.Empty;
+	    RefreshReadCapability();
     }
 
     protected override void OnEditToRun()

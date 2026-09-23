@@ -1372,8 +1372,22 @@ public partial class ShellWindowModel
             GraphControlSaveDialogInitialDirectoryProvider = () =>
                 GetInitialDialogDirectory(lastGraphExportDialogDirectory, currentProjectFilePath),
             GraphControlSaveDialogDirectoryChanged = directory => lastGraphExportDialogDirectory = directory,
-            CanWriteProtocolVariable = CanWriteProtocolVariable
+            CanWriteProtocolVariable = CanWriteProtocolVariable,
+            CanReadProtocolVariable = CanReadProtocolVariable
         };
+    }
+
+    /// <summary>
+    /// Citelnost na vyzadani urcuje protokol (promenna na On Request eventu u XCP, Modbus masteru,
+    /// simulace); protokol si ownership promenne kontroluje sam v CanReadVariable.
+    /// </summary>
+    private bool CanReadProtocolVariable(IProtocolVariable protocolVariable)
+    {
+        return realProjectData?.Module?.Drivers != null
+               && realProjectData.Module.Drivers
+                   .SelectMany(driver => driver.Protocols)
+                   .OfType<IProtocolVariableReadProtocol>()
+                   .Any(protocol => protocol.CanReadVariable(protocolVariable));
     }
 
     /// <summary>

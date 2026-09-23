@@ -21,6 +21,7 @@
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
 			<conv:EmptyToCollapsedConverter x:Key="EmptyToCollapsed"/>
 			<conv:CellStateToBackgroundConverter x:Key="CellStateBackground"/>
+			<conv:ReadErrorToBackgroundConverter x:Key="ReadErrorBackground"/>
 		</ResourceDictionary>
 	</UserControl.Resources>
 
@@ -31,7 +32,9 @@
 			                     IsEnabled="{Binding CanWrite}"/>
 			<telerik:RadMenuItem Header="Write on Enter" IsCheckable="True" IsChecked="{Binding WriteOnEnter, Mode=TwoWay}"
 			                     IsEnabled="{Binding IsWriteActive}"/>
-			<telerik:RadMenuItem Header="Auto Read" IsCheckable="True" IsChecked="{Binding AutoRead, Mode=TwoWay}"/>
+			<!-- Auto Read has no meaning for a matrix read on request (On Request event) -->
+			<telerik:RadMenuItem Header="Auto Read" IsCheckable="True" IsChecked="{Binding AutoRead, Mode=TwoWay}"
+			                     IsEnabled="{Binding IsAutoReadApplicable}"/>
 		</telerik:RadContextMenu>
 	</telerik:RadContextMenu.ContextMenu>
 
@@ -79,8 +82,12 @@
 
 			<!-- Ticky (Auto Read, Write on Enter) jsou v kontextovem menu; tady jen tlacitka -->
 			<StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="5,0,0,0">
+				<!-- Read on request: enabled only for a matrix bound to an On Request event;
+				     a periodically polled matrix keeps it disabled (rozhodnuti Radka 2026-09-23) -->
 				<telerik:RadButton Content="Read" Command="{Binding ReadCommand}" Padding="8,1" Margin="0,0,5,0"
-				                   ToolTip="Refresh the table from the last read data (discards pending edits)"/>
+				                   IsEnabled="{Binding CanReadNow}"
+				                   Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
+				                   ToolTip="Read the matrix from the device once (On Request event; discards pending edits)"/>
 				<telerik:RadButton Content="Write" Command="{Binding WriteDirtyCommand}" Padding="8,1"
 				                   IsEnabled="{Binding CanWriteDirty}"
 				                   Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToVisible}}"

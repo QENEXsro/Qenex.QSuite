@@ -21,14 +21,17 @@
 			<BooleanToVisibilityConverter x:Key="TrueToVisible"/>
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
 			<conv:WriteErrorToBackgroundConverter x:Key="WriteErrorBackground"/>
+			<conv:ReadErrorToBackgroundConverter x:Key="ReadErrorBackground"/>
 		</ResourceDictionary>
 	</UserControl.Resources>
-	
+
 	<telerik:RadContextMenu.ContextMenu>
 		<telerik:RadContextMenu>
 			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 			<telerik:RadMenuItem Header="Write Mode" IsCheckable="True" IsChecked="{Binding IsWriteMode, Mode=TwoWay}"
 			                     IsEnabled="{Binding CanWrite}"/>
+			<!-- Read on request: enabled only for a variable bound to an On Request event -->
+			<telerik:RadMenuItem Header="Read" Command="{Binding ReadCommand}" IsEnabled="{Binding CanReadNow}"/>
 		</telerik:RadContextMenu>
 	</telerik:RadContextMenu.ContextMenu>
     
@@ -81,6 +84,7 @@
 				     registrovany v ShellWindow.Resources (barvy tematu) -->
 				<q:QTextBox Grid.Column="0" Text="{Binding VariableValue, Mode=TwoWay, UpdateSourceTrigger=Default}"
 				            MinWidth="50" IsReadOnly="True" TextAlignment="Right" HorizontalAlignment="Stretch"
+				            Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
 				            Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToCollapsed}}"/>
 
 				<q:QTextBox Grid.Column="0" Text="{Binding EditValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -97,6 +101,11 @@
 					<q:QTextBlock Text="[" Margin="0,0,3,0"/>
 					<q:QTextBlock Text="{Binding VariableUnit, Mode=TwoWay, UpdateSourceTrigger=Default}"/>
 					<q:QTextBlock Text="]" Margin="3,0,0,0"/>
+					<!-- Read on request: shown only for a variable bound to an On Request event -->
+					<telerik:RadButton Content="Read" Command="{Binding ReadCommand}" Padding="6,0" Margin="5,0,0,0"
+					                   IsEnabled="{Binding CanReadNow}"
+					                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
+					                   ToolTip="Read the value from the device once (On Request event)"/>
 				</StackPanel>
 			</Grid>
 		</StackPanel>
