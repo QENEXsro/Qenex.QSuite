@@ -30,7 +30,7 @@
 				<Setter Property="MinHeight" Value="0"/>
 				<Setter Property="MinWidth" Value="0"/>
 				<Setter Property="Padding" Value="6,0"/>
-				<Setter Property="Foreground" Value="#999"/>
+				<!-- Foreground not set: the caption inherits the theme text color like the label -->
 				<Setter Property="Background" Value="Transparent"/>
 				<Setter Property="VerticalAlignment" Value="Top"/>
 				<Setter Property="Template">
