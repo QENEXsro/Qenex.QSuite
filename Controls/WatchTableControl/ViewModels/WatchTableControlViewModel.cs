@@ -185,6 +185,20 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 		{
 			WriteModeReferences.Remove(row.Reference);
 			row.IsWriteError = false;
+
+			// Leaving write mode: the row display was frozen meanwhile, so show the variable's
+			// current value (after a write it is the written one) — an On Request variable gets
+			// no poll that would refresh it otherwise.
+			var text = FindVariable(row.Reference) switch
+			{
+				ScalarVariable scalar => scalar.GetPresentationText(),
+				StringVariable str => str.Values,
+				_ => null
+			};
+			if (text != null)
+			{
+				row.Value = text;
+			}
 		}
 	}
 

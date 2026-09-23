@@ -90,6 +90,28 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 		    {
 			    PrefillEditValue();
 		    }
+		    else
+		    {
+			    // Leaving write mode: the display was frozen meanwhile, so show the variable's
+			    // current value (after a write it is the written one) — an On Request variable
+			    // gets no poll that would refresh it otherwise.
+			    RefreshDisplayFromVariable();
+		    }
+	    }
+    }
+
+    private void RefreshDisplayFromVariable()
+    {
+	    var text = Variables?.FirstOrDefault() switch
+	    {
+		    ScalarVariable scalarVariable => scalarVariable.GetPresentationText(),
+		    StringVariable stringVariable => stringVariable.Values,
+		    _ => null
+	    };
+
+	    if (text != null)
+	    {
+		    VariableValue = text;
 	    }
     }
 

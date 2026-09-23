@@ -42,9 +42,10 @@
 		</Grid.RowDefinitions>
 		<Grid.ColumnDefinitions>
 			<ColumnDefinition Width="Auto"/>
+			<ColumnDefinition Width="Auto"/>
 			<ColumnDefinition Width="*"/>
 		</Grid.ColumnDefinitions>
-		
+
 		<telerik:RadExpander Grid.Row="0" Grid.Column="0" Style="{StaticResource SquareExpanderStyle}" HorizontalAlignment="Left">
 			<Grid Margin="5">
 				<Grid.ColumnDefinitions>
@@ -69,10 +70,19 @@
 			</Grid>
 		</telerik:RadExpander>
 		
-		<q:QTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding VariableLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+		<!-- Read on request: next to the settings arrow, exactly the arrow button's size (20 px high);
+		     shown only for a variable bound to an On Request event -->
+		<telerik:RadButton Grid.Row="0" Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
+		                   Height="20" MinHeight="0" Padding="6,0" Margin="3,0,0,0"
+		                   VerticalAlignment="Top" VerticalContentAlignment="Center"
+		                   IsEnabled="{Binding CanReadNow}"
+		                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
+		                   ToolTip="Read the value from the device once (On Request event)"/>
+
+		<q:QTextBlock Grid.Row="0" Grid.Column="2" Text="{Binding VariableLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 		              Margin="5,0,0,3" TextWrapping="NoWrap" HorizontalAlignment="Left"/>
-		
-		<StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Vertical" Margin="0,3,0,0">
+
+		<StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Vertical" Margin="0,3,0,0">
 			
 			<Grid HorizontalAlignment="Stretch">
 				<Grid.ColumnDefinitions>
@@ -101,11 +111,6 @@
 					<q:QTextBlock Text="[" Margin="0,0,3,0"/>
 					<q:QTextBlock Text="{Binding VariableUnit, Mode=TwoWay, UpdateSourceTrigger=Default}"/>
 					<q:QTextBlock Text="]" Margin="3,0,0,0"/>
-					<!-- Read on request: shown only for a variable bound to an On Request event -->
-					<telerik:RadButton Content="Read" Command="{Binding ReadCommand}" Padding="6,0" Margin="5,0,0,0"
-					                   IsEnabled="{Binding CanReadNow}"
-					                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
-					                   ToolTip="Read the value from the device once (On Request event)"/>
 				</StackPanel>
 			</Grid>
 		</StackPanel>
