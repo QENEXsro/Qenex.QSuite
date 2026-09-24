@@ -17,7 +17,10 @@ namespace Qenex.QSuite.Protocols.SimulDataProtocol;
 /// protocols; the hosting SimDataDriver only starts and stops the protocol. A scalar with
 /// direction="write" is a live parameter, not a generated signal: "nonlin" drives the harmonic
 /// amplitudes of "laosstress", "h1amp".."h4amp"/"h1freq".."h4freq"/"h1phase".."h4phase" tune single harmonics and
-/// "hold" freezes the matrix generators while the simulation runs. A MatrixVariable with the
+/// "hold" freezes the matrix generators while the simulation runs. A parameter (or any scalar
+/// without a generator) with direction="readWrite" is also read back like a device parameter:
+/// its current value is re-announced in the period of its event (or on request) with a fresh
+/// timestamp, exactly as the Modbus master / XCP poll a readWrite variable. A MatrixVariable with the
 /// "thermal" signal is generated as a whole table (axes + data) and, with direction="readWrite",
 /// its cells can be edited from the Matrix control (the edit lands in the raw buffer directly).
 /// </summary>
@@ -302,14 +305,14 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
             // Parameter variables (nonlin, hold, h{n}amp/h{n}freq/h{n}phase — or any scalar with a
             // write/readwrite direction) are written by the user from controls and read by the
             // generators — never generated over, whatever direction the configurator saved.
+            // With direction read/readWrite they are still polled like on a real device: the
+            // current value is read back (re-announced) in the period of the event, so every
+            // control shows a written value the same way as with the Modbus master / XCP.
             var isMatrix = simulVariable.Variable is MatrixVariable;
-            if (SimulSignalCatalog.IsParameterKey(spec.Signal) || (!isMatrix && spec.Direction != CommDirection.Read))
-            {
-                continue;
-            }
+            var isReadBack = !isMatrix && (SimulSignalCatalog.IsParameterKey(spec.Signal) || spec.Direction != CommDirection.Read);
 
-            // A matrix is generated when readable (read/readWrite); write-only means user data only.
-            if (isMatrix && spec.Direction == CommDirection.Write)
+            // Write-only = user data only, never read (same as the Modbus master / XCP).
+            if (spec.Direction == CommDirection.Write)
             {
                 continue;
             }
@@ -323,7 +326,7 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                 if (spec.VariableEvent is not PeriodicVarEvent periodicEvent)
                 {
                     Logger?.Log(LogLevel.Warn,
-                        $"Simulation: variable '{simulVariable.Variable.Name}' has no periodic event ('{spec.VariableEvent?.Name}'); not generated.");
+                        $"Simulation: variable '{simulVariable.Variable.Name}' has no periodic event ('{spec.VariableEvent?.Name}'); not polled.");
                     continue;
                 }
 
@@ -331,7 +334,7 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                 if (intervalMs <= 0)
                 {
                     Logger?.Log(LogLevel.Warn,
-                        $"Simulation: variable '{simulVariable.Variable.Name}' has a non-positive period; not generated.");
+                        $"Simulation: variable '{simulVariable.Variable.Name}' has a non-positive period; not polled.");
                     continue;
                 }
             }
@@ -349,12 +352,14 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                         continue;
                     }
 
-                    var signal = SimulSignalCatalog.Create(ResolveSignalKey(spec, scalarVariable), settings);
+                    // Read-back entry: nothing to generate, the poll only re-announces the value
+                    // the variable holds (a parameter or a readWrite scalar written from a control).
+                    var signal = isReadBack ? null : SimulSignalCatalog.Create(ResolveSignalKey(spec, scalarVariable), settings);
                     var scalarEntry = new PollEntry
                     {
                         ProtocolVariable = simulVariable,
                         Variable = scalarVariable,
-                        Generate = t => SetSampleValue(scalarVariable, signal.Next(t)),
+                        Generate = signal == null ? _ => { } : t => SetSampleValue(scalarVariable, signal.Next(t)),
                         IntervalMs = intervalMs,
                         NextDueMs = now
                     };
@@ -636,11 +641,12 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
     }
 
     /// <summary>
-    /// The on-request counterpart of a generation cycle: generates one sample (scalar signal) or
-    /// one table (matrix) for the current generator time and notifies the variable. A variable
+    /// The on-request counterpart of a poll cycle: generates one sample (scalar signal) or one
+    /// table (matrix) for the current generator time and notifies the variable. A variable
     /// without a generator (parameter such as "hold", readWrite scalar) has nothing to generate —
     /// its current value is re-announced with a fresh timestamp, exactly like reading a parameter
-    /// back from a device.
+    /// back from a device (its poll entry is a read-back entry; the fallback below covers a
+    /// variable that got no entry at all).
     /// </summary>
     public async Task ReadVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
     {

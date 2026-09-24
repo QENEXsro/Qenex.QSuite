@@ -40,6 +40,7 @@ await RunTest("T6 installer example Qenex_Sim_SimulData_AllSignals loads and run
 await RunTest("T7 commParam round trip keeps amp/freq/nonlin/init (no id)", Test7_CommParamRoundTrip);
 await RunTest("T8 On Request event: nothing generated, one sample per read", Test8_OnRequestRead);
 await RunTest("T9 Simulation driver carries reads and writes to the protocol", Test9_DriverCommands);
+await RunTest("T10 readWrite parameter on a periodic event is read back like on a device", Test10_ParameterReadBack);
 
 Console.WriteLine();
 Console.WriteLine("==== SUMMARY ====");
@@ -291,6 +292,48 @@ async Task<(bool, string)> Test4_PendingWrites()
     await ((IProtocolVariableWriteProtocol)protocol).WriteVariableAsync(pv);
 
     return (canWrite && reapplied && drained, $"canWrite={canWrite}; reapplied={reapplied}; drained={drained}");
+}
+
+// T10: a readWrite parameter (hold) on a periodic event is polled like a Modbus/XCP variable:
+// its current value is re-announced every period with a fresh timestamp and never generated
+// over (a written value stays); a write-only parameter is never announced.
+async Task<(bool, string)> Test10_ParameterReadBack()
+{
+    var protocol = NewProtocol();
+    var events = new IVarEvent[] { Event("e50", 50) };
+    var hold = DoubleVariable(1, "Hold");
+    var writeOnly = DoubleVariable(2, "Nonlin");
+    var strain = DoubleVariable(3, "Strain");
+    Add(protocol, hold, events, "direction=\"readWrite\";eventRef=\"e50\";id=\"Hold\";signal=\"hold\"");
+    Add(protocol, writeOnly, events, "direction=\"write\";eventRef=\"e50\";id=\"Nonlin\";signal=\"nonlin\"");
+    Add(protocol, strain, events, "direction=\"read\";eventRef=\"e50\";id=\"Strain\";signal=\"laosstrain\"");
+    var pvHold = protocol.Variables[0];
+    var pvWriteOnly = protocol.Variables[1];
+
+    var holdNotified = 0;
+    var writeOnlyNotified = 0;
+    pvHold.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref holdNotified); return Task.CompletedTask; });
+    pvWriteOnly.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref writeOnlyNotified); return Task.CompletedTask; });
+
+    await protocol.StartAsync();
+    await Task.Delay(300);
+    var running = protocol.State == CommunicationState.Running;
+    var polledBefore = holdNotified;
+
+    // Operator write from a control: the value lives in the variable, the next polls read it back.
+    hold.TrySetEngValue(1.0);
+    hold.Timestamp = DateTime.UtcNow.AddMinutes(-1);
+    await Task.Delay(300);
+    var polledAfter = holdNotified - polledBefore;
+    var readBack = polledBefore >= 3 && polledAfter >= 3 && Math.Abs(hold.GetEngValue() - 1.0) < 1e-9
+                   && hold.Timestamp > DateTime.UtcNow.AddSeconds(-5);
+    var writeOnlySilent = writeOnlyNotified == 0;
+    var strainRuns = strain.GetEngValue() != 0.0;
+
+    await protocol.StopAsync();
+    var ok = running && readBack && writeOnlySilent && strainRuns;
+    return (ok, $"running={running}; polls before write={polledBefore}, after={polledAfter}; value kept and stamped={readBack}; " +
+                $"write-only silent={writeOnlySilent}; signal still generated={strainRuns}");
 }
 
 // T9: the simulation driver implements IProtocolVariableCommandDriver like the CAN/serial/TCP
