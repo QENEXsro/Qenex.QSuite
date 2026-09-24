@@ -304,12 +304,21 @@ async Task<(bool, string)> Test8_OnRequestRead()
     Add(protocol, stress, events, "direction=\"read\";eventRef=\"onRequest\";id=\"Stress\";signal=\"laosstress\"");
     Add(protocol, strain, events, "direction=\"read\";eventRef=\"e50\";id=\"Strain\";signal=\"laosstrain\"");
     Add(protocol, matrix, events, "direction=\"readWrite\";eventRef=\"onRequest\";id=\"ThermalField\";signal=\"thermal\"");
+    // Parameter (no generator) as readWrite on the On Request event: readable back like a device
+    // parameter; a write-only scalar is never readable (same rule as Modbus master / XCP).
+    var hold = DoubleVariable(4, "Hold");
+    var writeOnly = DoubleVariable(5, "WriteOnly");
+    Add(protocol, hold, events, "direction=\"readWrite\";eventRef=\"onRequest\";id=\"Hold\";signal=\"hold\"");
+    Add(protocol, writeOnly, events, "direction=\"write\";eventRef=\"onRequest\";id=\"WriteOnly\";signal=\"nonlin\"");
     var pvStress = protocol.Variables[0];
     var pvStrain = protocol.Variables[1];
     var pvMatrix = protocol.Variables[2];
+    var pvHold = protocol.Variables[3];
+    var pvWriteOnly = protocol.Variables[4];
     var reader = (IProtocolVariableReadProtocol)protocol;
 
-    var canReadOk = reader.CanReadVariable(pvStress) && reader.CanReadVariable(pvMatrix) && !reader.CanReadVariable(pvStrain);
+    var canReadOk = reader.CanReadVariable(pvStress) && reader.CanReadVariable(pvMatrix) && !reader.CanReadVariable(pvStrain)
+                    && reader.CanReadVariable(pvHold) && !reader.CanReadVariable(pvWriteOnly);
 
     var stoppedThrows = false;
     try { await reader.ReadVariableAsync(pvStress); } catch (InvalidOperationException) { stoppedThrows = true; }
@@ -328,6 +337,17 @@ async Task<(bool, string)> Test8_OnRequestRead()
     await reader.ReadVariableAsync(pvStress);
     await reader.ReadVariableAsync(pvMatrix);
     var oneEach = stressNotified == 1 && matrixNotified == 1;
+
+    // Reading the parameter back: the written value is re-announced unchanged with a fresh stamp.
+    var holdNotified = 0;
+    pvHold.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref holdNotified); return Task.CompletedTask; });
+    hold.TrySetEngValue(1.0);
+    hold.Timestamp = DateTime.UtcNow.AddMinutes(-1);
+    await reader.ReadVariableAsync(pvHold);
+    var holdReadBack = holdNotified == 1 && Math.Abs(hold.GetEngValue() - 1.0) < 1e-9
+                       && hold.Timestamp > DateTime.UtcNow.AddSeconds(-5);
+    var writeOnlyThrows = false;
+    try { await reader.ReadVariableAsync(pvWriteOnly); } catch (InvalidOperationException) { writeOnlyThrows = true; }
     var stampOk = stress.Timestamp > DateTime.UtcNow.AddSeconds(-5) && matrix.Timestamp > DateTime.UtcNow.AddSeconds(-5);
     var snap = DataSnapshot(matrix);
     var matrixFilled = snap.All(t => t >= 24.0 && t <= 66.0) && snap.Max() > 30.0
@@ -341,10 +361,11 @@ async Task<(bool, string)> Test8_OnRequestRead()
     try { await reader.ReadVariableAsync(pvMatrix); } catch (InvalidOperationException) { stoppedThrowsAgain = true; }
 
     var ok = canReadOk && stoppedThrows && running && periodicRuns && notGenerated && oneEach && stampOk && matrixFilled
-             && stillOne && stoppedThrowsAgain;
+             && holdReadBack && writeOnlyThrows && stillOne && stoppedThrowsAgain;
     var detail = $"canRead={canReadOk}; throws before start={stoppedThrows}; running={running}; periodic runs={periodicRuns}; " +
                  $"not generated={notGenerated}; one each={oneEach}; stamp={stampOk}; matrix filled={matrixFilled} " +
-                 $"({snap.Min():F1}..{snap.Max():F1}); still one={stillOne}; throws after stop={stoppedThrowsAgain}";
+                 $"({snap.Min():F1}..{snap.Max():F1}); hold read back={holdReadBack}; write-only throws={writeOnlyThrows}; " +
+                 $"still one={stillOne}; throws after stop={stoppedThrowsAgain}";
     return (ok, detail);
 }
 

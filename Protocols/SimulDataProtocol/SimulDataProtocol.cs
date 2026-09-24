@@ -606,9 +606,12 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
     #region IProtocolVariableReadProtocol (On Request event)
 
     /// <summary>
-    /// Readable on request = a generated variable (readable scalar signal or matrix; parameters are
-    /// never generated) bound to an On Request event. Decided from the configuration alone so the
-    /// host can enable the Read action before the protocol runs.
+    /// Readable on request = a variable bound to an On Request event with direction read or
+    /// readWrite — the same rule as the Modbus master and XCP, so the Read action of the controls
+    /// does not depend on the protocol behind the variable. A generated signal or matrix is
+    /// generated once per read; a parameter or a readWrite scalar (no generator, the value lives
+    /// in the variable like in a device's memory) reads back its current value. Decided from the
+    /// configuration alone so the host can enable the Read action before the protocol runs.
     /// </summary>
     public bool CanReadVariable(IProtocolVariable protocolVariable)
     {
@@ -617,24 +620,28 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
             || protocolVariable is not SimulDataProtocolVariable simulVariable
             || simulVariable.ProtocolVariableSpecification is not SimulDataProtocolVariableSpecification
             {
-                VariableEvent: OnRequestVarEvent
-            } spec
-            || SimulSignalCatalog.IsParameterKey(spec.Signal))
+                VariableEvent: OnRequestVarEvent,
+                Direction: CommDirection.Read or CommDirection.ReadWrite
+            } spec)
         {
             return false;
         }
 
         return simulVariable.Variable switch
         {
-            ScalarVariable scalar => spec.Direction == CommDirection.Read && SupportsValues(scalar),
-            MatrixVariable matrix => spec.Direction != CommDirection.Write && SimulSignalCatalog.IsMatrixKey(spec.Signal)
-                                     && matrix.ValidateLayout() == null,
+            ScalarVariable scalar => SupportsValues(scalar),
+            MatrixVariable matrix => SimulSignalCatalog.IsMatrixKey(spec.Signal) && matrix.ValidateLayout() == null,
             _ => false
         };
     }
 
-    /// <summary>Generates one sample (scalar) or one table (matrix) for the current generator time
-    /// and notifies the variable — the on-request counterpart of a generation cycle.</summary>
+    /// <summary>
+    /// The on-request counterpart of a generation cycle: generates one sample (scalar signal) or
+    /// one table (matrix) for the current generator time and notifies the variable. A variable
+    /// without a generator (parameter such as "hold", readWrite scalar) has nothing to generate —
+    /// its current value is re-announced with a fresh timestamp, exactly like reading a parameter
+    /// back from a device.
+    /// </summary>
     public async Task ReadVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
     {
         if (!CanReadVariable(protocolVariable))
@@ -644,7 +651,7 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
         }
 
         var entries = onRequestEntries;
-        if (State != CommunicationState.Running || entries == null || !entries.TryGetValue(protocolVariable, out var entry))
+        if (State != CommunicationState.Running || entries == null)
         {
             var message = $"Read of '{protocolVariable.Variable?.Name}' skipped — simulation not running.";
             Logger?.Log(LogLevel.Warn, $"Simulation: {message}");
@@ -652,10 +659,19 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
         }
 
         ct.ThrowIfCancellationRequested();
-        entry.Generate(generatorClock?.Elapsed.TotalSeconds ?? 0.0);
-        entry.Variable.Timestamp = DateTime.UtcNow;
-        await entry.ProtocolVariable.NotifyValueChangedAsync();
-        Logger?.Log(LogLevel.Debug, $"Simulation: read '{entry.Variable.Name}' on request.");
+        if (entries.TryGetValue(protocolVariable, out var entry))
+        {
+            entry.Generate(generatorClock?.Elapsed.TotalSeconds ?? 0.0);
+            entry.Variable.Timestamp = DateTime.UtcNow;
+            await entry.ProtocolVariable.NotifyValueChangedAsync();
+            Logger?.Log(LogLevel.Debug, $"Simulation: read '{entry.Variable.Name}' on request.");
+            return;
+        }
+
+        var variable = protocolVariable.Variable!;
+        variable.Timestamp = DateTime.UtcNow;
+        await protocolVariable.NotifyValueChangedAsync();
+        Logger?.Log(LogLevel.Debug, $"Simulation: read back the current value of '{variable.Name}' on request.");
     }
 
     #endregion
