@@ -93,11 +93,10 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 		    }
 		    else
 		    {
-			    // Leaving write mode discards the pending edit and re-follows the variable: the
-			    // display was frozen meanwhile, so show its current value (after a write it is
-			    // the written one) — an On Request variable gets no poll that would refresh it.
+			    // Leaving write mode discards the pending edit. The display keeps the last value
+			    // read from the device (it was frozen meanwhile): a written value is shown only
+			    // once the device returns it - next poll, or next Read for an On Request variable.
 			    IsDirty = false;
-			    RefreshDisplayFromVariable();
 		    }
 	    }
     }
@@ -358,7 +357,8 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 		    if (read && IsWriteActive)
 		    {
 			    // An explicit Read means the user wants the fresh value even in write mode
-			    // (the display is frozen there): show it and discard the pending edit.
+			    // (the display is frozen there): show the value just read and discard the
+			    // pending edit.
 			    _ = Application.Current.Dispatcher.BeginInvoke(() =>
 			    {
 				    RefreshDisplayFromVariable();

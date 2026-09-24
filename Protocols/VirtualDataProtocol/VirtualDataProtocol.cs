@@ -187,8 +187,15 @@ public class VirtualDataProtocol : ProtocolBase<VirtualWrite>, IScriptWriteAware
     }
 
     // Nothing to transfer: there is no device, the written value already lives in the variable.
+    // The protocol IS the device here, so it publishes the written value like a script write
+    // (own loop, fresh timestamp) - the controls show only what the "device" returns.
     public Task WriteVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
     {
+        if (State == CommunicationState.Running && protocolVariable.Variable is { } variable)
+        {
+            pendingWrites?.Writer.TryWrite(new VirtualWrite(variable, DateTime.UtcNow));
+        }
+
         return Task.CompletedTask;
     }
 

@@ -42,6 +42,14 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
     private DispatcherTimer? samplePumpTimer;
     private bool samplePumpDraining;
 
+    // Set while an operator write from a control is being notified (flows only into the
+    // handlers of that one NotifyValueChangedAsync call): the controls skip such a notification,
+    // because a written value is a request towards the device, not a value read from it. The
+    // truth shown by the controls is what the device returns - with the next poll (periodic
+    // event) or with the next Read (On Request event). A protocol that echoes the write on its
+    // own thread (Virtual Data, simulation read-back) notifies outside this scope.
+    private static readonly AsyncLocal<bool> operatorWriteNotification = new();
+
     #endregion
     
     #region Constructors
@@ -385,10 +393,24 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 		    return false;
 	    }
 
-	    // Na notifikaci je prihlaseny command driver (zapis do zarizeni) i ctecí handlery
-	    // ostatnich controlu (okamzity feedback nove hodnoty)
-	    await protocolVariable.NotifyValueChangedAsync();
+	    // The command driver listens on this notification (write to the device); the controls
+	    // are subscribed too but skip it (operatorWriteNotification) - they show only values
+	    // read back from the device.
+	    await NotifyOperatorWriteAsync(protocolVariable);
 	    return true;
+    }
+
+    private static async Task NotifyOperatorWriteAsync(IProtocolVariable protocolVariable)
+    {
+	    operatorWriteNotification.Value = true;
+	    try
+	    {
+		    await protocolVariable.NotifyValueChangedAsync();
+	    }
+	    finally
+	    {
+		    operatorWriteNotification.Value = false;
+	    }
     }
 
     /// <summary>
@@ -413,7 +435,7 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 	    var bytes = matrixVariable.RawData.AsSpan(byteOffset, elementSize).ToArray();
 	    matrixVariable.EnqueuePendingWrite(new MatrixWriteRequest(byteOffset, bytes));
 
-	    await protocolVariable.NotifyValueChangedAsync();
+	    await NotifyOperatorWriteAsync(protocolVariable);
 	    return true;
     }
 
@@ -760,10 +782,16 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 	    // The protocol side must never wait for the UI. Off the UI thread the handler only
 	    // freezes the sample (snapshot) and enqueues it for the sample pump; the returned task
 	    // is already completed, so DAQ/poll loops run at their own pace whatever the UI does.
-	    // On the UI thread (operator writes, headless tests without a dispatcher) it updates
-	    // directly so the immediate write feedback stays.
+	    // On the UI thread (headless tests without a dispatcher) it updates directly.
+	    // An operator write from a control is not shown: the controls display only what the
+	    // device returned (next poll / next Read).
 	    Func<IProtocolVariable, Task> handler = changedProtocolVariable =>
 	    {
+		    if (operatorWriteNotification.Value)
+		    {
+			    return Task.CompletedTask;
+		    }
+
 		    var variableSnapshot = CreateVariableSnapshot(changedProtocolVariable.Variable);
 		    if (Application.Current?.Dispatcher == null || Application.Current.Dispatcher.CheckAccess())
 		    {

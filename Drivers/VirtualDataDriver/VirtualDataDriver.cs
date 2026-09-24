@@ -9,9 +9,10 @@ namespace Qenex.QSuite.Drivers.VirtualDataDriver;
 /// <summary>
 /// Virtual connection for script-computed variables: no transport and no timing of its own.
 /// The hosted VirtualDataProtocol publishes values written by scripts; this driver only
-/// starts and stops the protocols.
+/// starts and stops the protocols and, like the CAN, serial, TCP and simulation drivers,
+/// carries the operator writes from controls to the owning protocol (which publishes them back).
 /// </summary>
-public class VirtualDataDriver : DriverBase, ITransportSource<VirtualWrite>
+public class VirtualDataDriver : DriverBase, IProtocolVariableCommandDriver, ITransportSource<VirtualWrite>
 {
     #region Constructors
 
@@ -73,6 +74,57 @@ public class VirtualDataDriver : DriverBase, ITransportSource<VirtualWrite>
 
     public override void Dispose()
     {
+    }
+
+    #endregion
+
+    #region Protocol variable commands (operator writes, on-request reads)
+
+    // Same pattern as the other drivers: the module wires the value-changed and read-requested
+    // notifications to this driver, which delegates to the owning protocol.
+    public bool CanSendCommand(IProtocolVariable protocolVariable)
+    {
+        return Protocols
+            .OfType<IProtocolVariableWriteProtocol>()
+            .Any(protocol => protocol.CanWriteVariable(protocolVariable));
+    }
+
+    public async Task OnProtocolVariableCommandAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        foreach (var protocol in Protocols.OfType<IProtocolVariableWriteProtocol>())
+        {
+            if (!protocol.CanWriteVariable(protocolVariable))
+            {
+                continue;
+            }
+
+            await protocol.WriteVariableAsync(protocolVariable, ct);
+            return;
+        }
+    }
+
+    public bool CanRequestRead(IProtocolVariable protocolVariable)
+    {
+        return Protocols
+            .OfType<IProtocolVariableReadProtocol>()
+            .Any(protocol => protocol.CanReadVariable(protocolVariable));
+    }
+
+    public async Task OnProtocolVariableReadRequestAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        foreach (var protocol in Protocols.OfType<IProtocolVariableReadProtocol>())
+        {
+            if (!protocol.CanReadVariable(protocolVariable))
+            {
+                continue;
+            }
+
+            await protocol.ReadVariableAsync(protocolVariable, ct);
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"No protocol of this driver can read variable '{protocolVariable.Variable?.Name}' on request.");
     }
 
     #endregion

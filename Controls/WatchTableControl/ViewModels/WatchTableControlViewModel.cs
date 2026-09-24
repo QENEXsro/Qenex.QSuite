@@ -218,12 +218,11 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 		{
 			WriteModeReferences.Remove(row.Reference);
 
-			// Leaving write mode discards the pending edit and re-follows the variable: the row
-			// display was frozen meanwhile, so show its current value (after a write it is the
-			// written one) — an On Request variable gets no poll that would refresh it otherwise.
+			// Leaving write mode discards the pending edit. The row keeps the last value read
+			// from the device (it was frozen meanwhile): a written value is shown only once the
+			// device returns it - next poll, or next Read for an On Request variable.
 			row.IsDirty = false;
 			row.IsWriteError = false;
-			RefreshRowFromVariable(row);
 		}
 
 		RefreshHasWriteActiveRows();
