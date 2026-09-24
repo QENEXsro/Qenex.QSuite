@@ -19,6 +19,8 @@ using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.ModuleXmlHandler;
 using Qenex.QSuite.ModuleXmlHandler.XmlStructure;
 using Qenex.QSuite.Protocols.Protocol;
+using Qenex.QSuite.Drivers.Driver;
+using Qenex.QSuite.Drivers.SimDataDriver;
 using Qenex.QSuite.Protocols.SimulDataProtocol;
 using Qenex.QSuite.Variables.QVariables;
 using Qenex.QSuite.Variables.QVariables.Values;
@@ -37,6 +39,7 @@ await RunTest("T5 parameters are not generated over", Test5_ParametersUntouched)
 await RunTest("T6 installer example Qenex_Sim_SimulData_AllSignals loads and runs", Test6_DemoProject);
 await RunTest("T7 commParam round trip keeps amp/freq/nonlin/init (no id)", Test7_CommParamRoundTrip);
 await RunTest("T8 On Request event: nothing generated, one sample per read", Test8_OnRequestRead);
+await RunTest("T9 Simulation driver carries reads and writes to the protocol", Test9_DriverCommands);
 
 Console.WriteLine();
 Console.WriteLine("==== SUMMARY ====");
@@ -288,6 +291,61 @@ async Task<(bool, string)> Test4_PendingWrites()
     await ((IProtocolVariableWriteProtocol)protocol).WriteVariableAsync(pv);
 
     return (canWrite && reapplied && drained, $"canWrite={canWrite}; reapplied={reapplied}; drained={drained}");
+}
+
+// T9: the simulation driver implements IProtocolVariableCommandDriver like the CAN/serial/TCP
+// drivers, so the module can wire read-requested and value-changed notifications to it; a Read
+// from a control (RequestReadAsync on the protocol variable) then reaches the protocol.
+async Task<(bool, string)> Test9_DriverCommands()
+{
+    var protocol = NewProtocol();
+    var driver = new SimDriver { IsEnabled = true };
+    driver.Protocols.Add(protocol);
+    var onRequest = new OnRequestVarEvent { Name = "onRequest" };
+    var events = new IVarEvent[] { Event("e50", 50), onRequest };
+    var hold = DoubleVariable(1, "Hold");
+    var stress = DoubleVariable(2, "Stress");
+    var periodic = DoubleVariable(3, "Strain");
+    Add(protocol, hold, events, "direction=\"readWrite\";eventRef=\"onRequest\";id=\"Hold\";signal=\"hold\"");
+    Add(protocol, stress, events, "direction=\"read\";eventRef=\"onRequest\";id=\"Stress\";signal=\"laosstress\"");
+    Add(protocol, periodic, events, "direction=\"read\";eventRef=\"e50\";id=\"Strain\";signal=\"laosstrain\"");
+    var pvHold = protocol.Variables[0];
+    var pvStress = protocol.Variables[1];
+    var pvPeriodic = protocol.Variables[2];
+    var commandDriver = (IProtocolVariableCommandDriver)driver;
+
+    var canOk = commandDriver.CanRequestRead(pvHold) && commandDriver.CanRequestRead(pvStress)
+                && !commandDriver.CanRequestRead(pvPeriodic)
+                && commandDriver.CanSendCommand(pvHold) && !commandDriver.CanSendCommand(pvStress);
+
+    // Wire like ModuleBase does for a command driver.
+    pvHold.SubscribeAsyncReadRequested((pv, ct) => commandDriver.OnProtocolVariableReadRequestAsync(pv, ct));
+    pvStress.SubscribeAsyncReadRequested((pv, ct) => commandDriver.OnProtocolVariableReadRequestAsync(pv, ct));
+
+    var noHandlerThrows = false;
+    try { await pvPeriodic.RequestReadAsync(); } catch (InvalidOperationException) { noHandlerThrows = true; }
+
+    var holdNotified = 0;
+    var stressNotified = 0;
+    pvHold.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref holdNotified); return Task.CompletedTask; });
+    pvStress.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref stressNotified); return Task.CompletedTask; });
+
+    await driver.StartAsync();
+    await Task.Delay(300); // the generator loop starts on a worker task and sets Running there
+    var running = driver.State == CommunicationState.Running && protocol.State == CommunicationState.Running;
+
+    hold.TrySetEngValue(1.0);
+    await pvHold.RequestReadAsync();
+    await pvStress.RequestReadAsync();
+    var readThroughDriver = holdNotified == 1 && stressNotified == 1 && Math.Abs(hold.GetEngValue() - 1.0) < 1e-9;
+
+    await driver.StopAsync();
+    var stoppedThrows = false;
+    try { await pvHold.RequestReadAsync(); } catch (InvalidOperationException) { stoppedThrows = true; }
+
+    var ok = canOk && noHandlerThrows && running && readThroughDriver && stoppedThrows;
+    return (ok, $"can={canOk}; no handler throws={noHandlerThrows}; running={running}; read through driver={readThroughDriver} " +
+                $"(hold={holdNotified}, stress={stressNotified}); throws after stop={stoppedThrows}");
 }
 
 // T8: a scalar signal and the thermal matrix bound to an On Request event are never generated
