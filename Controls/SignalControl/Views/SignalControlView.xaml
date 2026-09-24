@@ -151,13 +151,15 @@
 				            Background="{Binding IsReadError, Converter={StaticResource ErrorBackground}}"
 				            Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToCollapsed}}"/>
 
-				<!-- Edit box: yellow while the edited value is pending, red after a failed write -->
+				<!-- Edit box: orange in write mode (editable, whatever Write on Enter), yellow while
+				     the edited value is pending, red after a failed write -->
 				<q:QTextBox Grid.Column="0" Text="{Binding EditValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 				            MinWidth="50" TextAlignment="Right" HorizontalAlignment="Stretch"
 				            Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToVisible}}"
 				            ToolTip="Engineering value; Enter writes it (Write on Enter) or the Write button sends it">
 					<q:QTextBox.Background>
 						<MultiBinding Converter="{StaticResource EditStateBackground}">
+							<Binding Path="IsWriteActive"/>
 							<Binding Path="IsDirty"/>
 							<Binding Path="IsWriteError"/>
 						</MultiBinding>

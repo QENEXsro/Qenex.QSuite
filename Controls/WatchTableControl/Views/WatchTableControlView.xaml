@@ -112,13 +112,15 @@
 								           Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToCollapsed}}"/>
 								<!-- No local Style: it would override the implicit QTextBox theme style
 								     registered in ShellWindow.Resources (theme colors).
-								     Yellow while the edited value is pending, red after a failed write. -->
+								     Orange in write mode (editable, whatever Write on Enter), yellow while the
+								     edited value is pending, red after a failed write. -->
 								<q:QTextBox Text="{Binding EditValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 								            TextAlignment="Right"
 								            Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToVisible}}"
 								            ToolTip="Engineering value; Enter writes it (Write on Enter) or the Write button sends it">
 									<q:QTextBox.Background>
 										<MultiBinding Converter="{StaticResource EditStateBackground}">
+											<Binding Path="IsWriteActive"/>
 											<Binding Path="IsDirty"/>
 											<Binding Path="IsWriteError"/>
 										</MultiBinding>
