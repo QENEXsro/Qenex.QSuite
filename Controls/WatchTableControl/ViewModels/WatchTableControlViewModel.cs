@@ -149,12 +149,40 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 		set;
 	}
 
+	/// <summary>Table-wide option (same as in the Matrix and Single-Signal controls): Enter writes
+	/// the edited value immediately; unticked, the edit stays pending and the row's Write button
+	/// sends it. Pushed into every row.</summary>
+	[DataMember]
+	public bool WriteOnEnter
+	{
+		get;
+		set
+		{
+			field = value;
+			OnPropertyChanged();
+			foreach (var row in Rows)
+			{
+				row.WriteOnEnter = value;
+			}
+		}
+	}
+
+	/// <summary>"Write on Enter" menu item enablement: some row is in write mode.</summary>
+	[IgnoreDataMember]
+	public bool HasWriteActiveRows
+	{
+		get;
+		private set { field = value; OnPropertyChanged(); }
+	}
+
 	public void RefreshWriteCapability()
 	{
 		foreach (var row in Rows)
 		{
 			RefreshRowWriteCapability(row);
 		}
+
+		RefreshHasWriteActiveRows();
 	}
 
 	private void RefreshRowWriteCapability(WatchRow row)
@@ -163,6 +191,11 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 		// (string variables stay read-only in the table).
 		var variable = FindVariable(row.Reference);
 		row.CanWrite = variable is ScalarVariable && (CanWriteVariableProvider?.Invoke(variable) ?? false);
+	}
+
+	private void RefreshHasWriteActiveRows()
+	{
+		HasWriteActiveRows = Rows.Any(row => row.IsWriteActive);
 	}
 
 	private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -184,30 +217,40 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 		else
 		{
 			WriteModeReferences.Remove(row.Reference);
-			row.IsWriteError = false;
 
-			// Leaving write mode: the row display was frozen meanwhile, so show the variable's
-			// current value (after a write it is the written one) — an On Request variable gets
-			// no poll that would refresh it otherwise.
-			var text = FindVariable(row.Reference) switch
-			{
-				ScalarVariable scalar => scalar.GetPresentationText(),
-				StringVariable str => str.Values,
-				_ => null
-			};
-			if (text != null)
-			{
-				row.Value = text;
-			}
+			// Leaving write mode discards the pending edit and re-follows the variable: the row
+			// display was frozen meanwhile, so show its current value (after a write it is the
+			// written one) — an On Request variable gets no poll that would refresh it otherwise.
+			row.IsDirty = false;
+			row.IsWriteError = false;
+			RefreshRowFromVariable(row);
+		}
+
+		RefreshHasWriteActiveRows();
+	}
+
+	private void RefreshRowFromVariable(WatchRow row)
+	{
+		var variable = FindVariable(row.Reference);
+		var text = variable switch
+		{
+			ScalarVariable scalar => scalar.GetPresentationText(),
+			StringVariable str => str.Values,
+			_ => null
+		};
+		if (text != null)
+		{
+			row.Value = text;
+			row.Time = variable!.Timestamp;
 		}
 	}
 
+	/// <summary>Sets the row's edit box to the variable's current value without marking it dirty.</summary>
 	private void PrefillEditValue(WatchRow row)
 	{
-		row.EditValue = FindVariable(row.Reference) is ScalarVariable scalar
+		row.SetEditValueSilently(FindVariable(row.Reference) is ScalarVariable scalar
 			? scalar.GetEngValue().ToString(CultureInfo.InvariantCulture)
-			: string.Empty;
-		row.IsWriteError = false;
+			: string.Empty);
 	}
 
 	private async Task WriteRowAsync(WatchRow row)
@@ -227,14 +270,20 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 			return;
 		}
 
+		bool written;
 		try
 		{
-			var written = await WriteVariableEngValueAsync(variable, engValue);
-			row.IsWriteError = !written;
+			written = await WriteVariableEngValueAsync(variable, engValue);
 		}
 		catch
 		{
-			row.IsWriteError = true;
+			written = false;
+		}
+
+		row.IsWriteError = !written;
+		if (written)
+		{
+			row.IsDirty = false;
 		}
 	}
 
@@ -270,7 +319,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 	private void RefreshRowReadCapability(WatchRow row)
 	{
 		// Only a variable bound to an On Request event is readable on request (the protocol
-		// decides through the host provider); periodically polled rows keep Read disabled.
+		// decides through the host provider); periodically polled rows have no Read button.
 		var variable = FindVariable(row.Reference);
 		row.CanRead = variable != null && (CanReadVariableProvider?.Invoke(variable) ?? false);
 	}
@@ -294,6 +343,16 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 			row.LastUpdate = DateTime.MinValue;
 			var read = await ReadVariableAsync(variable);
 			row.IsReadError = !read;
+			if (read && row.IsWriteActive)
+			{
+				// An explicit Read means the user wants the fresh value even in write mode (the
+				// row display is frozen there): show it and discard the pending edit.
+				_ = Application.Current.Dispatcher.BeginInvoke(() =>
+				{
+					RefreshRowFromVariable(row);
+					PrefillEditValue(row);
+				});
+			}
 		}
 		catch
 		{
@@ -349,6 +408,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 			Unit = protVariable is ScalarVariable scalar ? scalar.Values.ValPresentation.Unit : string.Empty,
 			// Restore the persisted per-row write mode before the change handler is attached.
 			IsWriteMode = WriteModeReferences.Contains(reference),
+			WriteOnEnter = WriteOnEnter,
 			WriteRequested = r => _ = WriteRowAsync(r),
 			ReadRequested = r => _ = ReadRowAsync(r)
 		};
@@ -358,6 +418,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 		// Writability and on-request readability must be re-evaluated on every (re)bind.
 		RefreshRowWriteCapability(row);
 		RefreshRowReadCapability(row);
+		RefreshHasWriteActiveRows();
 		if (row.IsWriteActive)
 		{
 			PrefillEditValue(row);
@@ -419,6 +480,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 		row.PropertyChanged -= OnRowPropertyChanged;
 		WriteModeReferences.Remove(row.Reference);
 		Rows.Remove(row);
+		RefreshHasWriteActiveRows();
 		LinkedVariables.RemoveAll(reference => reference == row.Reference);
 		var variable = Variables.FirstOrDefault(v => GetVariableReference(v) == row.Reference);
 		if (variable != null)
