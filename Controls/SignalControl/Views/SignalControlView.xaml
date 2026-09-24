@@ -30,7 +30,8 @@
 				<Setter Property="MinHeight" Value="0"/>
 				<Setter Property="MinWidth" Value="0"/>
 				<Setter Property="Padding" Value="6,0"/>
-				<!-- Foreground not set: the caption inherits the theme text color like the label -->
+				<!-- No Foreground here: a plain Button gets black from the WPF theme style, so the
+				     caption is a q:QTextBlock (theme text color via the implicit style from ShellWindow) -->
 				<Setter Property="Background" Value="Transparent"/>
 				<Setter Property="VerticalAlignment" Value="Top"/>
 				<Setter Property="Template">
@@ -112,12 +113,15 @@
 		     shown only for a variable bound to an On Request event -->
 		<!-- Margin top 1 = the expander header's 1 px border above the arrow button, so both
 		     20 px boxes share the same top edge (measured with _Tests/LayoutProbe: delta 0) -->
-		<Button Grid.Row="0" Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
+		<Button Grid.Row="0" Grid.Column="1" Command="{Binding ReadCommand}"
 		        Style="{StaticResource ReadButtonStyle}" Margin="3,1,0,0"
 		        Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
 		        IsEnabled="{Binding CanReadNow}"
 		        Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
-		        ToolTip="Read the value from the device once (On Request event)"/>
+		        ToolTip="Read the value from the device once (On Request event)">
+			<!-- q:QTextBlock = caption in the theme text color (light/dark), same as the label -->
+			<q:QTextBlock Text="Read"/>
+		</Button>
 
 		<q:QTextBlock Grid.Row="0" Grid.Column="2" Text="{Binding VariableLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 		              Margin="5,0,0,3" TextWrapping="NoWrap" HorizontalAlignment="Left"/>
