@@ -68,8 +68,7 @@
 			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 			<telerik:RadMenuItem Header="Write Mode" IsCheckable="True" IsChecked="{Binding IsWriteMode, Mode=TwoWay}"
 			                     IsEnabled="{Binding CanWrite}"/>
-			<!-- Read on request: enabled only for a variable bound to an On Request event -->
-			<telerik:RadMenuItem Header="Read" Command="{Binding ReadCommand}" IsEnabled="{Binding CanReadNow}"/>
+			<!-- Read on request is the button in the header only (same as WatchTable/Matrix) -->
 		</telerik:RadContextMenu>
 	</telerik:RadContextMenu.ContextMenu>
     
