@@ -20,13 +20,14 @@
 			</ResourceDictionary.MergedDictionaries>
 			<BooleanToVisibilityConverter x:Key="TrueToVisible"/>
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
-			<conv:WriteErrorToBackgroundConverter x:Key="WriteErrorBackground"/>
-			<conv:ReadErrorToBackgroundConverter x:Key="ReadErrorBackground"/>
-			<!-- Read button: telerik:RadButton based on the theme style like every other button in
-			     the controls (text color = Windows11 palette, switches with the theme), with its own
-			     20 px template copied from the settings arrow (SquareExpanderStyle.HeaderButtonStyle
-			     in SharedStyles) so the theme template cannot change its height -->
-			<Style x:Key="ReadButtonStyle" TargetType="telerik:RadButton" BasedOn="{StaticResource RadButtonStyle}">
+			<conv:EditStateToBackgroundConverter x:Key="EditStateBackground"/>
+			<conv:ErrorToBackgroundConverter x:Key="ErrorBackground"/>
+			<!-- Header buttons (Read, Write): telerik:RadButton based on the theme style like every
+			     other button in the controls (text color = Windows11 palette, switches with the theme),
+			     with its own 20 px template copied from the settings arrow
+			     (SquareExpanderStyle.HeaderButtonStyle in SharedStyles) so the theme template cannot
+			     change its height -->
+			<Style x:Key="HeaderButtonStyle" TargetType="telerik:RadButton" BasedOn="{StaticResource RadButtonStyle}">
 				<Setter Property="Height" Value="20"/>
 				<Setter Property="MinHeight" Value="0"/>
 				<Setter Property="MinWidth" Value="0"/>
@@ -68,6 +69,10 @@
 			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 			<telerik:RadMenuItem Header="Write Mode" IsCheckable="True" IsChecked="{Binding IsWriteMode, Mode=TwoWay}"
 			                     IsEnabled="{Binding CanWrite}"/>
+			<!-- Same option as in the Matrix control: Enter writes immediately; unticked, the edit
+			     stays pending and the Write button in the header sends it -->
+			<telerik:RadMenuItem Header="Write on Enter" IsCheckable="True" IsChecked="{Binding WriteOnEnter, Mode=TwoWay}"
+			                     IsEnabled="{Binding IsWriteActive}"/>
 			<!-- Read on request is the button in the header only (same as WatchTable/Matrix) -->
 		</telerik:RadContextMenu>
 	</telerik:RadContextMenu.ContextMenu>
@@ -78,6 +83,7 @@
 			<RowDefinition Height="*"/>
 		</Grid.RowDefinitions>
 		<Grid.ColumnDefinitions>
+			<ColumnDefinition Width="Auto"/>
 			<ColumnDefinition Width="Auto"/>
 			<ColumnDefinition Width="Auto"/>
 			<ColumnDefinition Width="*"/>
@@ -112,16 +118,25 @@
 		<!-- Margin top 1 = the expander header's 1 px border above the arrow button, so both
 		     20 px boxes share the same top edge (measured with _Tests/LayoutProbe: delta 0) -->
 		<telerik:RadButton Grid.Row="0" Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
-		                   Style="{StaticResource ReadButtonStyle}" Margin="3,1,0,0"
-		                   Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
+		                   Style="{StaticResource HeaderButtonStyle}" Margin="3,1,0,0"
+		                   Background="{Binding IsReadError, Converter={StaticResource ErrorBackground}}"
 		                   IsEnabled="{Binding CanReadNow}"
 		                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
 		                   ToolTip="Read the value from the device once (On Request event)"/>
 
-		<q:QTextBlock Grid.Row="0" Grid.Column="2" Text="{Binding VariableLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+		<!-- Write button (same as the Matrix control): only in write mode with Write on Enter off;
+		     enabled once the value is edited, greys back after the write -->
+		<telerik:RadButton Grid.Row="0" Grid.Column="2" Content="Write" Command="{Binding WriteDirtyCommand}"
+		                   Style="{StaticResource HeaderButtonStyle}" Margin="3,1,0,0"
+		                   Background="{Binding IsWriteError, Converter={StaticResource ErrorBackground}}"
+		                   IsEnabled="{Binding CanWriteDirty}"
+		                   Visibility="{Binding IsWriteButtonVisible, Converter={StaticResource TrueToVisible}}"
+		                   ToolTip="Write the edited value to the device"/>
+
+		<q:QTextBlock Grid.Row="0" Grid.Column="3" Text="{Binding VariableLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 		              Margin="5,0,0,3" TextWrapping="NoWrap" HorizontalAlignment="Left"/>
 
-		<StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Vertical" Margin="0,3,0,0">
+		<StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="4" Orientation="Vertical" Margin="0,3,0,0">
 			
 			<Grid HorizontalAlignment="Stretch">
 				<Grid.ColumnDefinitions>
@@ -133,14 +148,20 @@
 				     registrovany v ShellWindow.Resources (barvy tematu) -->
 				<q:QTextBox Grid.Column="0" Text="{Binding VariableValue, Mode=TwoWay, UpdateSourceTrigger=Default}"
 				            MinWidth="50" IsReadOnly="True" TextAlignment="Right" HorizontalAlignment="Stretch"
-				            Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
+				            Background="{Binding IsReadError, Converter={StaticResource ErrorBackground}}"
 				            Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToCollapsed}}"/>
 
+				<!-- Edit box: yellow while the edited value is pending, red after a failed write -->
 				<q:QTextBox Grid.Column="0" Text="{Binding EditValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 				            MinWidth="50" TextAlignment="Right" HorizontalAlignment="Stretch"
 				            Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToVisible}}"
-				            Background="{Binding IsWriteError, Converter={StaticResource WriteErrorBackground}}"
-				            ToolTip="Engineering value; Enter writes it to the device">
+				            ToolTip="Engineering value; Enter writes it (Write on Enter) or the Write button sends it">
+					<q:QTextBox.Background>
+						<MultiBinding Converter="{StaticResource EditStateBackground}">
+							<Binding Path="IsDirty"/>
+							<Binding Path="IsWriteError"/>
+						</MultiBinding>
+					</q:QTextBox.Background>
 					<q:QTextBox.InputBindings>
 						<KeyBinding Key="Enter" Command="{Binding WriteValueCommand}"/>
 					</q:QTextBox.InputBindings>

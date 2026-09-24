@@ -14,6 +14,7 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 {
 	private DateTime previousUpdateTime = DateTime.MinValue;
 	private double prevValue;
+	private bool suppressDirty;
 	
     public SignalControlViewModel()
     {
@@ -85,18 +86,33 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 	    {
 		    field = value;
 		    OnPropertyChanged();
-		    OnPropertyChanged(nameof(IsWriteActive));
+		    NotifyWriteStateChanged();
 		    if (value)
 		    {
 			    PrefillEditValue();
 		    }
 		    else
 		    {
-			    // Leaving write mode: the display was frozen meanwhile, so show the variable's
-			    // current value (after a write it is the written one) — an On Request variable
-			    // gets no poll that would refresh it otherwise.
+			    // Leaving write mode discards the pending edit and re-follows the variable: the
+			    // display was frozen meanwhile, so show its current value (after a write it is
+			    // the written one) — an On Request variable gets no poll that would refresh it.
+			    IsDirty = false;
 			    RefreshDisplayFromVariable();
 		    }
+	    }
+    }
+
+    /// <summary>Write mode: Enter writes the edited value immediately instead of leaving it
+    /// pending for the Write button (same option as in the Matrix control).</summary>
+    [DataMember]
+    public bool WriteOnEnter
+    {
+	    get;
+	    set
+	    {
+		    field = value;
+		    OnPropertyChanged();
+		    OnPropertyChanged(nameof(IsWriteButtonVisible));
 	    }
     }
 
@@ -123,32 +139,90 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 	    {
 		    field = value;
 		    OnPropertyChanged();
-		    OnPropertyChanged(nameof(IsWriteActive));
+		    NotifyWriteStateChanged();
 	    }
     }
 
     [IgnoreDataMember]
     public bool IsWriteActive => IsWriteMode && CanWrite;
 
+    /// <summary>Edited value in write mode; a user edit marks it pending (dirty).</summary>
     [IgnoreDataMember]
-    public string EditValue { get; set { field = value; OnPropertyChanged(); IsWriteError = false; } }
+    public string EditValue
+    {
+	    get;
+	    set
+	    {
+		    if (field == value)
+		    {
+			    return;
+		    }
+
+		    field = value;
+		    OnPropertyChanged();
+		    if (!suppressDirty)
+		    {
+			    IsDirty = true;
+			    IsWriteError = false;
+		    }
+	    }
+    }
+
+    /// <summary>Edited value not written yet (yellow tint, enables the Write button).</summary>
+    [IgnoreDataMember]
+    public bool IsDirty
+    {
+	    get;
+	    private set
+	    {
+		    field = value;
+		    OnPropertyChanged();
+		    OnPropertyChanged(nameof(CanWriteDirty));
+	    }
+    }
 
     [IgnoreDataMember]
     public bool IsWriteError { get; set { field = value; OnPropertyChanged(); } }
 
-    // Lazy kvuli deserializaci (DataContractSerializer nevola konstruktor)
+    /// <summary>Write button: shown in write mode when Enter does not write (Write on Enter off).</summary>
     [IgnoreDataMember]
-    public RelayCommand<object> WriteValueCommand => field ??= new RelayCommand<object>(OnWriteValue);
+    public bool IsWriteButtonVisible => IsWriteActive && !WriteOnEnter;
+
+    /// <summary>Write button enablement: greys out until the value is edited, greys back after the write.</summary>
+    [IgnoreDataMember]
+    public bool CanWriteDirty => IsWriteActive && IsDirty;
+
+    // Lazy kvuli deserializaci (DataContractSerializer nevola konstruktor)
+    /// <summary>Enter in the edit box: immediate write when Write on Enter is ticked, otherwise
+    /// the edit stays pending for the Write button.</summary>
+    [IgnoreDataMember]
+    public RelayCommand<object> WriteValueCommand => field ??= new RelayCommand<object>(OnCommitEdit);
+
+    /// <summary>Write button: writes the pending value.</summary>
+    [IgnoreDataMember]
+    public RelayCommand<object> WriteDirtyCommand => field ??= new RelayCommand<object>(_ => _ = WriteValueAsync());
 
     public void RefreshWriteCapability()
     {
+	    // Numeric scalars only (a string variable has no engineering value to write).
 	    var variable = Variables?.FirstOrDefault();
-	    CanWrite = variable != null && (CanWriteVariableProvider?.Invoke(variable) ?? false);
+	    CanWrite = variable is ScalarVariable && (CanWriteVariableProvider?.Invoke(variable) ?? false);
     }
 
-    private void OnWriteValue(object parameter)
+    private void NotifyWriteStateChanged()
     {
-	    _ = WriteValueAsync();
+	    OnPropertyChanged(nameof(IsWriteActive));
+	    OnPropertyChanged(nameof(IsWriteButtonVisible));
+	    OnPropertyChanged(nameof(CanWriteDirty));
+    }
+
+    private void OnCommitEdit(object parameter)
+    {
+	    if (WriteOnEnter)
+	    {
+		    _ = WriteValueAsync();
+	    }
+	    // Without Write on Enter the edit already marked the value dirty; the Write button sends it.
     }
 
     private async Task WriteValueAsync()
@@ -166,14 +240,20 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 		    return;
 	    }
 
+	    bool written;
 	    try
 	    {
-		    var written = await WriteVariableEngValueAsync(variable, engValue);
-		    IsWriteError = !written;
+		    written = await WriteVariableEngValueAsync(variable, engValue);
 	    }
 	    catch
 	    {
-		    IsWriteError = true;
+		    written = false;
+	    }
+
+	    IsWriteError = !written;
+	    if (written)
+	    {
+		    IsDirty = false;
 	    }
     }
 
@@ -183,11 +263,22 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 		    NumberStyles.Float, CultureInfo.InvariantCulture, out engValue);
     }
 
+    /// <summary>Sets the edit box to the variable's current value without marking it dirty.</summary>
     private void PrefillEditValue()
     {
-	    EditValue = Variables?.FirstOrDefault() is ScalarVariable scalarVariable
-		    ? scalarVariable.GetEngValue().ToString(CultureInfo.InvariantCulture)
-		    : string.Empty;
+	    suppressDirty = true;
+	    try
+	    {
+		    EditValue = Variables?.FirstOrDefault() is ScalarVariable scalarVariable
+			    ? scalarVariable.GetEngValue().ToString(CultureInfo.InvariantCulture)
+			    : string.Empty;
+	    }
+	    finally
+	    {
+		    suppressDirty = false;
+	    }
+
+	    IsDirty = false;
 	    IsWriteError = false;
     }
 
@@ -264,6 +355,16 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 		    previousUpdateTime = DateTime.MinValue;
 		    var read = await ReadVariableAsync(variable);
 		    IsReadError = !read;
+		    if (read && IsWriteActive)
+		    {
+			    // An explicit Read means the user wants the fresh value even in write mode
+			    // (the display is frozen there): show it and discard the pending edit.
+			    _ = Application.Current.Dispatcher.BeginInvoke(() =>
+			    {
+				    RefreshDisplayFromVariable();
+				    PrefillEditValue();
+			    });
+		    }
 	    }
 	    catch
 	    {
