@@ -22,21 +22,20 @@
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
 			<conv:WriteErrorToBackgroundConverter x:Key="WriteErrorBackground"/>
 			<conv:ReadErrorToBackgroundConverter x:Key="ReadErrorBackground"/>
-			<!-- Read button drawn exactly like the settings arrow button of SquareExpanderStyle
-			     (20 px high box, #888 1 px border, radius 2, transparent) - own template so no
-			     theme style can change its height -->
-			<Style x:Key="ReadButtonStyle" TargetType="Button">
+			<!-- Read button: telerik:RadButton based on the theme style like every other button in
+			     the controls (text color = Windows11 palette, switches with the theme), with its own
+			     20 px template copied from the settings arrow (SquareExpanderStyle.HeaderButtonStyle
+			     in SharedStyles) so the theme template cannot change its height -->
+			<Style x:Key="ReadButtonStyle" TargetType="telerik:RadButton" BasedOn="{StaticResource RadButtonStyle}">
 				<Setter Property="Height" Value="20"/>
 				<Setter Property="MinHeight" Value="0"/>
 				<Setter Property="MinWidth" Value="0"/>
 				<Setter Property="Padding" Value="6,0"/>
-				<!-- No Foreground here: a plain Button gets black from the WPF theme style, so the
-				     caption is a q:QTextBlock (theme text color via the implicit style from ShellWindow) -->
 				<Setter Property="Background" Value="Transparent"/>
 				<Setter Property="VerticalAlignment" Value="Top"/>
 				<Setter Property="Template">
 					<Setter.Value>
-						<ControlTemplate TargetType="Button">
+						<ControlTemplate TargetType="telerik:RadButton">
 							<Border x:Name="ButtonBorder"
 							        Background="{TemplateBinding Background}"
 							        BorderBrush="#888"
@@ -113,15 +112,12 @@
 		     shown only for a variable bound to an On Request event -->
 		<!-- Margin top 1 = the expander header's 1 px border above the arrow button, so both
 		     20 px boxes share the same top edge (measured with _Tests/LayoutProbe: delta 0) -->
-		<Button Grid.Row="0" Grid.Column="1" Command="{Binding ReadCommand}"
-		        Style="{StaticResource ReadButtonStyle}" Margin="3,1,0,0"
-		        Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
-		        IsEnabled="{Binding CanReadNow}"
-		        Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
-		        ToolTip="Read the value from the device once (On Request event)">
-			<!-- q:QTextBlock = caption in the theme text color (light/dark), same as the label -->
-			<q:QTextBlock Text="Read"/>
-		</Button>
+		<telerik:RadButton Grid.Row="0" Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
+		                   Style="{StaticResource ReadButtonStyle}" Margin="3,1,0,0"
+		                   Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
+		                   IsEnabled="{Binding CanReadNow}"
+		                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
+		                   ToolTip="Read the value from the device once (On Request event)"/>
 
 		<q:QTextBlock Grid.Row="0" Grid.Column="2" Text="{Binding VariableLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 		              Margin="5,0,0,3" TextWrapping="NoWrap" HorizontalAlignment="Left"/>
