@@ -30,7 +30,12 @@
 
 	<telerik:RadContextMenu.ContextMenu>
 		<telerik:RadContextMenu>
+			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 			<telerik:RadMenuItem Header="Remove" Command="{Binding RemoveSelectedCommand}"/>
+			<!-- Same option as in the Matrix and Single-Signal controls: Enter writes immediately;
+			     unticked, the edit stays pending and the row's Write button sends it -->
+			<telerik:RadMenuItem Header="Write on Enter" IsCheckable="True" IsChecked="{Binding WriteOnEnter, Mode=TwoWay}"
+			                     IsEnabled="{Binding HasWriteActiveRows}"/>
 			<telerik:RadMenuItem Header="Columns">
 				<telerik:RadMenuItem Header="Name" IsCheckable="True" StaysOpenOnClick="True"
 				                     IsChecked="{Binding IsNameColumnVisible, Mode=TwoWay}"/>
@@ -45,11 +50,6 @@
 				<telerik:RadMenuItem Header="Read" IsCheckable="True" StaysOpenOnClick="True"
 				                     IsChecked="{Binding IsReadColumnVisible, Mode=TwoWay}"/>
 			</telerik:RadMenuItem>
-			<!-- Same option as in the Matrix and Single-Signal controls: Enter writes immediately;
-			     unticked, the edit stays pending and the row's Write button sends it -->
-			<telerik:RadMenuItem Header="Write on Enter" IsCheckable="True" IsChecked="{Binding WriteOnEnter, Mode=TwoWay}"
-			                     IsEnabled="{Binding HasWriteActiveRows}"/>
-			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 		</telerik:RadContextMenu>
 	</telerik:RadContextMenu.ContextMenu>
 
