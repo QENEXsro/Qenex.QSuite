@@ -358,6 +358,13 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
     /// <summary>Discards pending edits and write errors; the display texts stay as read.</summary>
     private void ClearPendingEdits()
     {
+        // allCells is null while the DataContractSerializer sets IsWriteMode (no constructor,
+        // OnDeserialized runs later); nothing to clear before the grid exists.
+        if (allCells == null)
+        {
+            return;
+        }
+
         foreach (var cell in allCells)
         {
             cell.IsDirty = false;
