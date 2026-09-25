@@ -490,11 +490,27 @@ public class SignalControlViewModel : ControlBase, IVariableWriteControl, IVaria
 	    RefreshReadCapability();
     }
 
+    /// <summary>Edit -> Run: nothing has been read from the device yet, so the control shows
+    /// nothing (rule "truth is what comes from the device", Radek 2026-09-25) - the display and
+    /// the write-mode edit box are emptied; the first poll / Read fills them.</summary>
     protected override void OnEditToRun()
     {
 	    VariableValue = string.Empty;
 	    previousUpdateTime = DateTime.MinValue;
 	    prevValue = 0;
+	    IsReadError = false;
+	    suppressDirty = true;
+	    try
+	    {
+		    EditValue = string.Empty;
+	    }
+	    finally
+	    {
+		    suppressDirty = false;
+	    }
+
+	    IsDirty = false;
+	    IsWriteError = false;
     }
 
     [OnDeserialized]

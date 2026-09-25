@@ -13,7 +13,8 @@ public sealed class WatchRow : INotifyPropertyChanged
 	public string Name { get; set { field = value; OnChanged(); } } = string.Empty;
 	public string Unit { get; set { field = value; OnChanged(); } } = string.Empty;
 	public string Value { get; set { field = value; OnChanged(); } } = string.Empty;
-	public DateTime Time { get; set { field = value; OnChanged(); } }
+	/// <summary>Timestamp of the displayed value; null before the first value of the run.</summary>
+	public DateTime? Time { get; set { field = value; OnChanged(); } }
 
 	/// <summary>Last update time - used for throttling (RefreshTime).</summary>
 	internal DateTime LastUpdate { get; set; } = DateTime.MinValue;

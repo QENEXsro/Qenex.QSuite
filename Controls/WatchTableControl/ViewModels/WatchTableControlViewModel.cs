@@ -471,6 +471,23 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 		});
 	}
 
+	/// <summary>Edit -> Run: nothing has been read from the device yet, so every row shows
+	/// nothing (Value, Time and the write-mode edit box are emptied) until the first poll /
+	/// Read fills it (rule "truth is what comes from the device", Radek 2026-09-25).</summary>
+	protected override void OnEditToRun()
+	{
+		foreach (var row in Rows)
+		{
+			row.Value = string.Empty;
+			row.Time = null;
+			row.LastUpdate = DateTime.MinValue;
+			row.IsReadError = false;
+			row.SetEditValueSilently(string.Empty);
+			row.IsDirty = false;
+			row.IsWriteError = false;
+		}
+	}
+
 	private void RemoveSelected()
 	{
 		var row = SelectedRow;

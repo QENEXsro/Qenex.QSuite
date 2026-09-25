@@ -466,10 +466,21 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         RefreshReadCapability();
     }
 
+    /// <summary>Edit -> Run: nothing has been read from the device yet, so the cells show
+    /// nothing (the grid shape and axis captions stay) until the first poll / Read fills them
+    /// (rule "truth is what comes from the device", Radek 2026-09-25). The write-mode edit
+    /// boxes are emptied as well.</summary>
     protected override void OnEditToRun()
     {
         previousUpdateTime = DateTime.MinValue;
-        RefreshFromVariable();
+        IsReadError = false;
+        foreach (var cell in allCells)
+        {
+            cell.Text = string.Empty;
+            cell.SetEditTextSilently(string.Empty);
+            cell.IsDirty = false;
+            cell.IsWriteError = false;
+        }
     }
 
     #endregion
