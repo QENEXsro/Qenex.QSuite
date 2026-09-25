@@ -1,23 +1,32 @@
+using System.Diagnostics;
 using Qenex.QSuite.LogSystems.LogSystem;
 
 namespace Qenex.QSuite.Protocols.XcpCore;
 
 /// <summary>
 /// Transport-agnostic XCP master session engine. Owns the strictly serialized request/response
-/// cycle (standard communication model: one command, one response), timeout detection with SYNCH
-/// recovery and whole-transaction retries, and the connect/disconnect session state. Transmits
-/// through the <see cref="Transmitter"/> delegate injected by the hosting protocol and consumes
-/// received packets via <see cref="OnPacketReceived"/> — it knows nothing about CAN or TCP framing.
+/// cycle (standard communication model: one command, one response; block mode: one UPLOAD answered
+/// by a burst of RES packets, one DOWNLOAD block of several packets answered once), timeout
+/// detection with SYNCH recovery and whole-transaction retries, and the connect/disconnect session
+/// state. Transmits through the <see cref="Transmitter"/> delegate injected by the hosting protocol
+/// and consumes received packets via <see cref="OnPacketReceived"/> — it knows nothing about CAN or
+/// TCP framing. Block mode contract: Pepa/Protocols/XCP/BlockMode.md.
 /// </summary>
 public sealed class XcpMaster(ILogger? logger = null)
 {
     // Per-packet data limits derived from the slave's MAX_CTO (CONNECT response, spec minimum 8).
     // Classic CAN (MAX_CTO=8, AG=1): RES carries up to 7 data bytes, DOWNLOAD up to 6. Larger CTOs
-    // (XCP on Ethernet) fit any supported value (max 8 bytes) into a single packet, so chained
-    // multi-packet transfers only ever happen on CAN.
+    // (XCP on Ethernet) fit any scalar (max 8 bytes) into a single packet; multi-packet transfers
+    // happen for scalars only on CAN and for matrix blocks on every transport.
     private int EffectiveMaxCto => Math.Max((int)(ConnectInfo?.MaxCto ?? 8), 8);
     private int MaxReadBytesPerPacket => EffectiveMaxCto - 1;
     private int MaxWriteBytesPerPacket => EffectiveMaxCto - 2;
+
+    /// <summary>UPLOAD / DOWNLOAD carry the element count in one byte (AG = 1: bytes).</summary>
+    private const int MaxBlockElements = byte.MaxValue;
+
+    /// <summary>MIN_ST (GET_COMM_MODE_INFO) in milliseconds; the unit is 100 µs.</summary>
+    private double MinStIntervalMs => CommModeInfo is { MinSt: > 0 } info ? info.MinSt / 10.0 : 0;
 
     private readonly SemaphoreSlim requestLock = new(1, 1);
 
@@ -61,6 +70,29 @@ public sealed class XcpMaster(ILogger? logger = null)
     /// <summary>False when the slave has no calibration resource or protects it with seed &amp; key.</summary>
     public bool WritesAllowed { get; private set; }
 
+    /// <summary>GET_COMM_MODE_INFO response; null when the slave does not offer it (no OPTIONAL bit
+    /// in CONNECT, or ERR_CMD_UNKNOWN).</summary>
+    public XcpCommModeInfo? CommModeInfo { get; private set; }
+
+    /// <summary>The slave answers an UPLOAD larger than one packet with a burst of RES packets
+    /// (CONNECT COMM_MODE_BASIC bit 6, SLAVE_BLOCK_MODE).</summary>
+    public bool SlaveBlockModeAvailable => ConnectInfo?.SupportsSlaveBlockMode == true;
+
+    /// <summary>The slave accepts DOWNLOAD + DOWNLOAD_NEXT bursts acknowledged once per block
+    /// (GET_COMM_MODE_INFO MASTER_BLOCK_MODE with a usable MAX_BS).</summary>
+    public bool MasterBlockModeAvailable => CommModeInfo is { SupportsMasterBlockMode: true, MaxBs: > 0 };
+
+    // Slave block mode: the RES burst answering one UPLOAD is assembled here and the pending
+    // command completes with the assembled data once every expected byte has arrived.
+    private volatile BlockUpload? pendingBlockUpload;
+
+    private sealed class BlockUpload(int expectedBytes)
+    {
+        public readonly byte[] Data = new byte[expectedBytes];
+        public int Received;
+        public int ExpectedBytes => Data.Length;
+    }
+
     #region Receive path
 
     /// <summary>
@@ -84,7 +116,7 @@ public sealed class XcpMaster(ILogger? logger = null)
                     Interlocked.Decrement(ref lateResponsesExpected);
                     logger?.Log(LogLevel.Debug, $"XCP: late {XcpPacket.Classify(packet[0])} to a cancelled command consumed (PID 0x{packet[0]:X2}).");
                 }
-                else if (pendingResponse?.TrySetResult(packet) != true)
+                else if (!TryAssembleBlockUpload(packet) && pendingResponse?.TrySetResult(packet) != true)
                 {
                     logger?.Log(LogLevel.Warn, $"XCP: unsolicited {XcpPacket.Classify(packet[0])} packet (PID 0x{packet[0]:X2}) ignored.");
                 }
@@ -102,6 +134,45 @@ public sealed class XcpMaster(ILogger? logger = null)
                 DaqDtoReceived?.Invoke(packet);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Slave block mode: one RES packet of the burst answering the pending UPLOAD. Data bytes are
+    /// appended (padding beyond the expected count — classic CAN DLC 8 — is dropped); every packet
+    /// restarts the timeout like EV_CMD_PENDING, and the last one completes the command with a
+    /// synthetic RES carrying the whole block. An ERR packet is not consumed here: it completes the
+    /// command through the normal path and the partial block is discarded.
+    /// </summary>
+    private bool TryAssembleBlockUpload(byte[] packet)
+    {
+        var block = pendingBlockUpload;
+        var response = pendingResponse;
+        if (block == null || response == null || packet[0] != 0xFF)
+        {
+            return false;
+        }
+
+        lock (block)
+        {
+            var count = Math.Min(packet.Length - 1, block.ExpectedBytes - block.Received);
+            if (count > 0)
+            {
+                packet.AsSpan(1, count).CopyTo(block.Data.AsSpan(block.Received));
+                block.Received += count;
+            }
+
+            if (block.Received < block.ExpectedBytes)
+            {
+                Interlocked.Increment(ref pendingEventGeneration);
+                return true;
+            }
+        }
+
+        var assembled = new byte[1 + block.ExpectedBytes];
+        assembled[0] = 0xFF;
+        block.Data.CopyTo(assembled, 1);
+        response.TrySetResult(assembled);
+        return true;
     }
 
     private void HandleEvent(byte[] packet)
@@ -181,6 +252,27 @@ public sealed class XcpMaster(ILogger? logger = null)
             ConnectInfo = connect;
             IsConnected = true;
 
+            // Optional communication modes (master block mode, MAX_BS, MIN_ST) — only asked for
+            // when CONNECT announces GET_COMM_MODE_INFO; a slave answering ERR_CMD_UNKNOWN simply
+            // has no master block mode.
+            CommModeInfo = null;
+            if (connect.HasOptionalCommModeInfo)
+            {
+                try
+                {
+                    var infoPacket = await ExecuteCommandAsync(XcpCodec.BuildGetCommModeInfo(), "GET_COMM_MODE_INFO", token);
+                    CommModeInfo = XcpCodec.ParseCommModeInfoResponse(infoPacket);
+                }
+                catch (XcpErrorException e) when (e.ErrorCode == XcpErrorCode.CmdUnknown)
+                {
+                    logger?.Log(LogLevel.Debug, "XCP: GET_COMM_MODE_INFO not implemented by the slave; no master block mode.");
+                }
+            }
+
+            logger?.Log(LogLevel.Info, MasterBlockModeAvailable
+                ? $"XCP: block mode — slave {(SlaveBlockModeAvailable ? "yes" : "no")}, master yes (MAX_BS {CommModeInfo!.MaxBs}, MIN_ST {CommModeInfo.MinSt} × 100 µs)."
+                : $"XCP: block mode — slave {(SlaveBlockModeAvailable ? "yes" : "no")}, master no (large transfers are chained packet by packet).");
+
             var statusPacket = await ExecuteCommandAsync(XcpCodec.BuildGetStatus(), "GET_STATUS", token);
             var status = Codec.ParseGetStatusResponse(statusPacket);
             WritesAllowed = connect.SupportsCalibration && !status.IsCalibrationProtected;
@@ -206,6 +298,7 @@ public sealed class XcpMaster(ILogger? logger = null)
         {
             IsConnected = false;
             ConnectInfo = null;
+            CommModeInfo = null;
             LastStatus = null;
             WritesAllowed = false;
             requestLock.Release();
@@ -217,35 +310,54 @@ public sealed class XcpMaster(ILogger? logger = null)
     #region Memory transfer
 
     /// <summary>
-    /// Reads <paramref name="size"/> bytes (1..8) from the ECU. Values that fit MAX_CTO − 1 are a
-    /// single SHORT_UPLOAD; on classic CAN (7-byte limit) 8-byte values are chained as
-    /// SHORT_UPLOAD(7) + UPLOAD(1) using the auto-incremented MTA (each frame individually
-    /// acknowledged, no block mode). A chained transfer is not atomic.
+    /// Reads <paramref name="size"/> bytes from the ECU. A value that fits MAX_CTO − 1 is a single
+    /// SHORT_UPLOAD (scalars; byte-exact as before). A larger block (matrix variables, or 8-byte
+    /// scalars on classic CAN) is transferred either in slave block mode — SET_MTA + UPLOAD bursts
+    /// of up to 255 bytes, each answered by a run of RES packets — or, when the slave has no block
+    /// mode, chained as SHORT_UPLOAD(MAX_CTO − 1) + UPLOAD(MAX_CTO − 1)… at the auto-incremented
+    /// MTA with every packet individually acknowledged (classic CAN 8-byte value = 7 + 1, as
+    /// before). A multi-packet transfer is not atomic with respect to the running ECU.
     /// </summary>
     public Task<byte[]> ReadMemoryAsync(byte addressExtension, uint address, int size, CancellationToken ct = default)
     {
         EnsureConnected();
-        if (size is < 1 or > 8)
+        if (size < 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(size), size, "XCP reads transfer 1..8 bytes.");
+            throw new ArgumentOutOfRangeException(nameof(size), size, "XCP reads transfer at least 1 byte.");
         }
 
         return ExecuteTransactionAsync(async token =>
         {
             var result = new byte[size];
+            var perPacket = MaxReadBytesPerPacket;
 
-            var firstCount = Math.Min(size, MaxReadBytesPerPacket);
-            var first = await ExecuteCommandAsync(
-                Codec.BuildShortUpload((byte)firstCount, addressExtension, address), "SHORT_UPLOAD", token);
-            CopyResponseData(first, "SHORT_UPLOAD", result.AsSpan(0, firstCount));
-
-            if (size > firstCount)
+            if (size <= perPacket || !SlaveBlockModeAvailable)
             {
+                var firstCount = Math.Min(size, perPacket);
+                var first = await ExecuteCommandAsync(
+                    Codec.BuildShortUpload((byte)firstCount, addressExtension, address), "SHORT_UPLOAD", token);
+                CopyResponseData(first, "SHORT_UPLOAD", result.AsSpan(0, firstCount));
+
                 // SHORT_UPLOAD leaves the MTA behind the uploaded block (spec 1.6.1.2.8), so the
-                // remainder continues from there.
-                var remaining = size - firstCount;
-                var second = await ExecuteCommandAsync(XcpCodec.BuildUpload((byte)remaining), "UPLOAD", token);
-                CopyResponseData(second, "UPLOAD", result.AsSpan(firstCount, remaining));
+                // remainder continues from there, one acknowledged UPLOAD per packet.
+                for (var offset = firstCount; offset < size; offset += perPacket)
+                {
+                    var count = Math.Min(perPacket, size - offset);
+                    var next = await ExecuteCommandAsync(XcpCodec.BuildUpload((byte)count), "UPLOAD", token);
+                    CopyResponseData(next, "UPLOAD", result.AsSpan(offset, count));
+                }
+
+                return result;
+            }
+
+            // Slave block mode: SET_MTA once, then UPLOAD bursts of up to 255 bytes at the
+            // auto-incremented MTA; each burst is a run of RES packets assembled by the receive path.
+            await ExecuteCommandAsync(Codec.BuildSetMta(addressExtension, address), "SET_MTA", token);
+            for (var offset = 0; offset < size; offset += MaxBlockElements)
+            {
+                var count = Math.Min(MaxBlockElements, size - offset);
+                var burst = await ExecuteCommandAsync(XcpCodec.BuildUpload((byte)count), "UPLOAD", token, blockUploadBytes: count);
+                CopyResponseData(burst, "UPLOAD", result.AsSpan(offset, count));
             }
 
             return result;
@@ -253,10 +365,13 @@ public sealed class XcpMaster(ILogger? logger = null)
     }
 
     /// <summary>
-    /// Writes bytes to the ECU as SET_MTA + DOWNLOAD (never SHORT_DOWNLOAD). Values larger than
-    /// MAX_CTO − 2 are chained as consecutive DOWNLOADs at the auto-incremented MTA (on classic
-    /// CAN 8 bytes = 6+2), each individually acknowledged. On timeout the whole transaction
-    /// retries, which re-issues SET_MTA — the MTA is never trusted across a recovery.
+    /// Writes bytes to the ECU as SET_MTA + DOWNLOAD (never SHORT_DOWNLOAD). Without master block
+    /// mode a value larger than MAX_CTO − 2 is chained as consecutive DOWNLOADs at the
+    /// auto-incremented MTA (on classic CAN 8 bytes = 6+2), each individually acknowledged. With
+    /// master block mode the data goes in blocks of up to MAX_BS packets / 255 bytes — DOWNLOAD
+    /// followed by DOWNLOAD_NEXT packets spaced by MIN_ST — each block acknowledged once;
+    /// ERR_SEQUENCE re-issues the block from SET_MTA. On timeout the whole transaction retries,
+    /// which re-issues SET_MTA — the MTA is never trusted across a recovery.
     /// </summary>
     public Task WriteMemoryAsync(byte addressExtension, uint address, byte[] data, CancellationToken ct = default)
     {
@@ -267,23 +382,88 @@ public sealed class XcpMaster(ILogger? logger = null)
                 "Calibration writes are not available: the slave's calibration resource is missing or requires seed & key.");
         }
 
-        if (data.Length is < 1 or > 8)
+        if (data.Length < 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(data), data.Length, "XCP writes transfer 1..8 bytes.");
+            throw new ArgumentOutOfRangeException(nameof(data), data.Length, "XCP writes transfer at least 1 byte.");
         }
 
         return ExecuteTransactionAsync<object?>(async token =>
         {
+            var perPacket = MaxWriteBytesPerPacket;
             await ExecuteCommandAsync(Codec.BuildSetMta(addressExtension, address), "SET_MTA", token);
 
-            for (var offset = 0; offset < data.Length; offset += MaxWriteBytesPerPacket)
+            if (!MasterBlockModeAvailable)
             {
-                var chunk = data.AsSpan(offset, Math.Min(MaxWriteBytesPerPacket, data.Length - offset));
-                await ExecuteCommandAsync(XcpCodec.BuildDownload(chunk), "DOWNLOAD", token);
+                for (var offset = 0; offset < data.Length; offset += perPacket)
+                {
+                    var chunk = data.AsSpan(offset, Math.Min(perPacket, data.Length - offset));
+                    await ExecuteCommandAsync(XcpCodec.BuildDownload(chunk), "DOWNLOAD", token);
+                }
+
+                return null;
+            }
+
+            var blockBytes = Math.Min(MaxBlockElements, CommModeInfo!.MaxBs * perPacket);
+            var offset2 = 0;
+            var sequenceRetries = 0;
+            while (offset2 < data.Length)
+            {
+                var count = Math.Min(blockBytes, data.Length - offset2);
+                try
+                {
+                    await ExecuteDownloadBlockAsync(data, offset2, count, token);
+                    offset2 += count;
+                    sequenceRetries = 0;
+                }
+                catch (XcpErrorException e) when (e.ErrorCode == XcpErrorCode.Sequence && sequenceRetries < MaxRetries)
+                {
+                    sequenceRetries++;
+                    logger?.Log(LogLevel.Warn,
+                        $"XCP: ERR_SEQUENCE in a DOWNLOAD block at byte offset {offset2}; re-issuing the block from SET_MTA (attempt {sequenceRetries}/{MaxRetries}).");
+                    await ExecuteCommandAsync(Codec.BuildSetMta(addressExtension, address + (uint)offset2), "SET_MTA", token);
+                }
             }
 
             return null;
         }, ct);
+    }
+
+    /// <summary>MIN_ST pacing between the packets of a block. Task.Delay rides on the coarse system
+    /// timer (≈16 ms granularity, and it may even complete early), so only the bulk of a long interval
+    /// is delayed and the rest is waited out on the Stopwatch.</summary>
+    private static async Task PaceAsync(long sinceTimestamp, double intervalMs, CancellationToken ct)
+    {
+        var remaining = intervalMs - Stopwatch.GetElapsedTime(sinceTimestamp).TotalMilliseconds;
+        if (remaining > 20)
+        {
+            await Task.Delay((int)(remaining - 20), ct);
+        }
+
+        while (Stopwatch.GetElapsedTime(sinceTimestamp).TotalMilliseconds < intervalMs)
+        {
+            ct.ThrowIfCancellationRequested();
+            Thread.Yield();
+        }
+    }
+
+    /// <summary>One master block mode block: DOWNLOAD(block length, first data) + DOWNLOAD_NEXT
+    /// (remaining, data)… sent back to back (MIN_ST apart), then a single RES/ERR for the block.</summary>
+    private async Task ExecuteDownloadBlockAsync(byte[] data, int start, int length, CancellationToken ct)
+    {
+        var perPacket = MaxWriteBytesPerPacket;
+        var packets = new List<byte[]>();
+        var offset = 0;
+        while (offset < length)
+        {
+            var chunkLength = Math.Min(perPacket, length - offset);
+            var chunk = data.AsSpan(start + offset, chunkLength);
+            packets.Add(offset == 0
+                ? XcpCodec.BuildDownloadBlockStart(length, chunk)
+                : XcpCodec.BuildDownloadNext(length - offset, chunk));
+            offset += chunkLength;
+        }
+
+        await ExecuteCommandsAsync(packets, packets.Count == 1 ? "DOWNLOAD" : "DOWNLOAD block", ct, blockUploadBytes: 0);
     }
 
     private void EnsureConnected()
@@ -540,12 +720,25 @@ public sealed class XcpMaster(ILogger? logger = null)
     /// a genuine timeout becomes <see cref="XcpTimeoutException"/> (recovery is the transaction
     /// wrapper's job). Must only be called while holding the request lock.
     /// </summary>
-    private async Task<byte[]> ExecuteCommandAsync(byte[] command, string commandName, CancellationToken ct)
+    private Task<byte[]> ExecuteCommandAsync(byte[] command, string commandName, CancellationToken ct, int blockUploadBytes = 0)
+    {
+        return ExecuteCommandsAsync([command], commandName, ct, blockUploadBytes);
+    }
+
+    /// <summary>
+    /// Sends one or more packets back to back (a master block mode DOWNLOAD block) and waits for the
+    /// single RES/ERR that answers them. <paramref name="blockUploadBytes"/> &gt; 0 means the answer
+    /// is a slave block mode burst of that many data bytes, assembled by the receive path.
+    /// </summary>
+    private async Task<byte[]> ExecuteCommandsAsync(IReadOnlyList<byte[]> packets, string commandName, CancellationToken ct,
+        int blockUploadBytes)
     {
         var transmitter = Transmitter
                           ?? throw new XcpProtocolException("XCP transport is not available (no transmitter injected).");
 
         var responseSource = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var block = blockUploadBytes > 0 ? new BlockUpload(blockUploadBytes) : null;
+        pendingBlockUpload = block;
         pendingResponse = responseSource;
         var sent = false;
         try
@@ -553,8 +746,18 @@ public sealed class XcpMaster(ILogger? logger = null)
             await transmitLock.WaitAsync(ct);
             try
             {
-                await transmitter(command, ct);
-                sent = true;
+                var lastSentAt = 0L;
+                for (var i = 0; i < packets.Count; i++)
+                {
+                    if (i > 0 && MinStIntervalMs > 0)
+                    {
+                        await PaceAsync(lastSentAt, MinStIntervalMs, ct);
+                    }
+
+                    await transmitter(packets[i], ct);
+                    lastSentAt = Stopwatch.GetTimestamp();
+                    sent = true;
+                }
             }
             finally
             {
@@ -590,13 +793,24 @@ public sealed class XcpMaster(ILogger? logger = null)
         finally
         {
             pendingResponse = null;
+            pendingBlockUpload = null;
             // Cancelled after the packet left and before the slave answered: the answer is still
             // on its way (TrySetCanceled fails once a response has already been delivered). A
             // timeout is deliberately NOT counted — the slave may never answer and SYNCH recovery
-            // must see the next packet.
+            // must see the next packet. A cancelled slave block mode burst leaves one late RES per
+            // packet not received yet.
             if (sent && ct.IsCancellationRequested && responseSource.TrySetCanceled())
             {
-                Interlocked.Increment(ref lateResponsesExpected);
+                var late = 1;
+                if (block != null)
+                {
+                    lock (block)
+                    {
+                        late = Math.Max(1, (block.ExpectedBytes - block.Received + MaxReadBytesPerPacket - 1) / MaxReadBytesPerPacket);
+                    }
+                }
+
+                Interlocked.Add(ref lateResponsesExpected, late);
             }
         }
     }

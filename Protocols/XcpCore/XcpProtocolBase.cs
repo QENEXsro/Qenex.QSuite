@@ -15,9 +15,10 @@ namespace Qenex.QSuite.Protocols.XcpCore;
 /// <summary>
 /// Transport-independent core of the simplified XCP master (ASAM MCD-1 XCP 1.1). Owns everything
 /// the CAN and TCP variants share: the session run loop (connect, reconnect on failure, fault on
-/// incompatible slaves), polling by SHORT_UPLOAD per variable (address/size from the module XML,
-/// interval from the variable's periodic event), operator writes via SET_MTA + DOWNLOAD with echo
-/// suppression, and protocol-variable creation. A transport subclass contributes only its session
+/// incompatible slaves), polling by SHORT_UPLOAD per scalar and by block transfer per matrix
+/// (address/size from the module XML, interval from the variable's periodic event), on-request
+/// reads, operator writes via SET_MTA + DOWNLOAD (matrix: only the edited cells, merged into
+/// contiguous windows) with echo suppression, and protocol-variable creation. A transport subclass contributes only its session
 /// settings, the framing of outgoing XCP packets into <typeparamref name="TFrame"/> and the
 /// extraction of received packets (its <see cref="ProtocolBase{T}.AddReceivedDataToQueueAsync"/>
 /// feeds <see cref="Master"/>.<see cref="XcpMaster.OnPacketReceived"/>).
@@ -363,6 +364,7 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
 
         var status = await session.ConnectAsync(ct);
         var connectInfo = session.ConnectInfo!;
+        WarnOnMatrixEndiannessMismatch(connectInfo.IsBigEndian);
 
         var message = session.WritesAllowed
             ? $"Connected to {SlaveDescription} ({(connectInfo.IsBigEndian ? "big" : "little")}-endian)."
@@ -372,6 +374,23 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
 
         Logger?.Log(LogLevel.Info, $"XCP: {message}");
         SetState(CommunicationState.Running, message);
+    }
+
+    /// <summary>A matrix block travels raw and the variable decodes its elements by its own
+    /// endianness setting — that setting has to match the slave's byte order from CONNECT.
+    /// A mismatch is a configuration error worth a warning, the data is not touched.</summary>
+    private void WarnOnMatrixEndiannessMismatch(bool slaveIsBigEndian)
+    {
+        foreach (var protocolVariable in Variables)
+        {
+            if (protocolVariable is XcpProtocolVariable { Variable: MatrixVariable matrix } &&
+                (matrix.Endianness == MatrixEndianness.Big) != slaveIsBigEndian)
+            {
+                Logger?.Log(LogLevel.Warn,
+                    $"XCP: matrix '{matrix.Name}' is configured {(matrix.Endianness == MatrixEndianness.Big ? "big" : "little")}-endian " +
+                    $"but the slave is {(slaveIsBigEndian ? "big" : "little")}-endian; its element values will decode wrong.");
+            }
+        }
     }
 
     private async Task TryDisconnectAsync()
@@ -466,9 +485,12 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
     {
         public required XcpProtocolVariable ProtocolVariable { get; init; }
         public required XcpVariableSpecification Spec { get; init; }
-        public required ScalarVariable Scalar { get; init; }
+        /// <summary>Exactly one of Scalar / Matrix is set.</summary>
+        public ScalarVariable? Scalar { get; init; }
+        public MatrixVariable? Matrix { get; init; }
         public required long IntervalMs { get; init; }
         public long NextDueMs { get; set; }
+        public string Name => ProtocolVariable.Variable.Name;
     }
 
     private async Task PollLoopAsync(IReadOnlySet<IProtocolVariable>? daqServedVariables, CancellationToken ct)
@@ -521,8 +543,8 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
                 catch (Exception e) when (e is XcpErrorException or XcpTimeoutException or XcpProtocolException)
                 {
                     consecutiveBusFailures++;
-                    Logger?.Log(LogLevel.Warn, $"XCP: poll of '{entry.Scalar.Name}' failed: {e.Message}");
-                    SetState(CommunicationState.Running, $"Poll of '{entry.Scalar.Name}' failed: {e.Message}");
+                    Logger?.Log(LogLevel.Warn, $"XCP: poll of '{entry.Name}' failed: {e.Message}");
+                    SetState(CommunicationState.Running, $"Poll of '{entry.Name}' failed: {e.Message}");
 
                     if (consecutiveBusFailures >= MaxConsecutiveBusFailures)
                     {
@@ -567,16 +589,27 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
                 continue;
             }
 
-            if (xcpVariable.Variable is not ScalarVariable scalarVariable)
+            ScalarVariable? scalarVariable = null;
+            MatrixVariable? matrixVariable = null;
+            switch (xcpVariable.Variable)
             {
-                Logger?.Log(LogLevel.Warn, $"XCP: variable '{xcpVariable.Variable.Name}' is not scalar; not polled.");
-                continue;
+                case ScalarVariable scalar:
+                    scalarVariable = scalar;
+                    break;
+                case MatrixVariable matrix:
+                    // A matrix is polled as one raw block (slave block mode when the slave has it).
+                    matrixVariable = matrix;
+                    break;
+                default:
+                    Logger?.Log(LogLevel.Warn, $"XCP: variable '{xcpVariable.Variable.Name}' is neither scalar nor matrix; not polled.");
+                    continue;
             }
 
+            var name = xcpVariable.Variable.Name;
             if (spec.VariableEvent is not PeriodicVarEvent periodicEvent)
             {
                 Logger?.Log(LogLevel.Warn,
-                    $"XCP: variable '{scalarVariable.Name}' has no periodic event ('{spec.VariableEvent?.Name}'); not polled.");
+                    $"XCP: variable '{name}' has no periodic event ('{spec.VariableEvent?.Name}'); not polled.");
                 continue;
             }
 
@@ -584,7 +617,7 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
             if (intervalMs <= 0)
             {
                 Logger?.Log(LogLevel.Warn,
-                    $"XCP: variable '{scalarVariable.Name}' has a non-positive poll interval; not polled.");
+                    $"XCP: variable '{name}' has a non-positive poll interval; not polled.");
                 continue;
             }
 
@@ -593,6 +626,7 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
                 ProtocolVariable = xcpVariable,
                 Spec = spec,
                 Scalar = scalarVariable,
+                Matrix = matrixVariable,
                 IntervalMs = intervalMs,
                 NextDueMs = now
             });
@@ -606,9 +640,14 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
         var session = master ?? throw new XcpProtocolException("Not connected to the XCP slave.");
 
         var bytes = await session.ReadMemoryAsync(entry.Spec.AddressExtension, entry.Spec.Address, entry.Spec.Size, ct);
-        var value = session.Codec.DecodeValue(bytes, entry.Spec.DataType);
+        if (entry.Matrix != null)
+        {
+            await ApplyBusBlockAsync(entry.ProtocolVariable, entry.Matrix, bytes, DateTime.UtcNow);
+            return;
+        }
 
-        await ApplyBusValueAsync(entry.ProtocolVariable, entry.Scalar, value, DateTime.UtcNow);
+        var value = session.Codec.DecodeValue(bytes, entry.Spec.DataType);
+        await ApplyBusValueAsync(entry.ProtocolVariable, entry.Scalar!, value, DateTime.UtcNow);
     }
 
     private static async Task ApplyBusValueAsync(XcpProtocolVariable protocolVariable, ScalarVariable scalar,
@@ -619,6 +658,26 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
 
         // The operator-write path listens on this notification; the flag keeps a bus-sourced update
         // from echoing back to the ECU (NotifyValueChangedAsync awaits its handlers, so the scope holds).
+        protocolVariable.IsUpdatingFromBus = true;
+        try
+        {
+            await protocolVariable.NotifyValueChangedAsync();
+        }
+        finally
+        {
+            protocolVariable.IsUpdatingFromBus = false;
+        }
+    }
+
+    /// <summary>A matrix block read from the ECU replaces the variable's raw buffer as a whole
+    /// (elements are decoded by the variable's own layout) and is published exactly like a polled
+    /// scalar — timestamp of the data plus the bus-update flag against echoing.</summary>
+    private static async Task ApplyBusBlockAsync(XcpProtocolVariable protocolVariable, MatrixVariable matrix,
+        byte[] block, DateTime timestampUtc)
+    {
+        matrix.SetValue(block);
+        matrix.Timestamp = timestampUtc;
+
         protocolVariable.IsUpdatingFromBus = true;
         try
         {
@@ -1419,7 +1478,7 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
     public bool CanWriteVariable(IProtocolVariable protocolVariable)
     {
         return Variables.Contains(protocolVariable) &&
-               protocolVariable is XcpProtocolVariable { Variable: ScalarVariable } &&
+               protocolVariable is XcpProtocolVariable { Variable: ScalarVariable or MatrixVariable } &&
                protocolVariable.ProtocolVariableSpecification is XcpVariableSpecification
                {
                    Direction: CommDirection.Write or CommDirection.ReadWrite
@@ -1430,8 +1489,18 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
     {
         if (protocolVariable is not XcpProtocolVariable xcpVariable ||
             xcpVariable.IsUpdatingFromBus || // echo of our own poll update
-            xcpVariable.Variable is not ScalarVariable scalarVariable ||
             xcpVariable.ProtocolVariableSpecification is not XcpVariableSpecification spec)
+        {
+            return;
+        }
+
+        if (xcpVariable.Variable is MatrixVariable matrixVariable)
+        {
+            await WriteMatrixElementsAsync(matrixVariable, spec, ct);
+            return;
+        }
+
+        if (xcpVariable.Variable is not ScalarVariable scalarVariable)
         {
             return;
         }
@@ -1480,17 +1549,112 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
         }
     }
 
+    /// <summary>
+    /// Matrix write: drains the variable's queue of edited cells (the host already stored each
+    /// value in the raw buffer and queued its byte window), merges windows that are contiguous in
+    /// memory into one transfer (Radek 2026-09-25) and writes every window as SET_MTA + DOWNLOAD
+    /// block(s) at the cell's address. A failed window is logged and reported as protocol state,
+    /// never thrown — the remaining windows are still written. Nothing is echoed to the controls:
+    /// the written values show up with the next poll / Read (truth is what comes from the device).
+    /// </summary>
+    private async Task WriteMatrixElementsAsync(MatrixVariable matrix, XcpVariableSpecification spec, CancellationToken ct)
+    {
+        var windows = DequeueWriteWindows(matrix);
+        if (windows.Count == 0)
+        {
+            return;
+        }
+
+        var session = master;
+        if (session is not { IsConnected: true })
+        {
+            Logger?.Log(LogLevel.Warn, $"XCP: write of '{matrix.Name}' skipped — not connected ({windows.Count} window(s) dropped).");
+            return;
+        }
+
+        if (!session.WritesAllowed)
+        {
+            var message = $"Write of '{matrix.Name}' rejected: calibration requires seed & key or is unavailable.";
+            Logger?.Log(LogLevel.Warn, $"XCP: {message}");
+            SetState(CommunicationState.Running, message);
+            return;
+        }
+
+        foreach (var (offset, length) in windows)
+        {
+            try
+            {
+                var bytes = matrix.RawData.AsSpan(offset, length).ToArray();
+                await session.WriteMemoryAsync(spec.AddressExtension, spec.Address + (uint)offset, bytes, ct);
+                Logger?.Log(LogLevel.Info,
+                    $"XCP: wrote {length} B of '{matrix.Name}' at 0x{spec.Address + (uint)offset:X} (byte offset {offset}).");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception e) when (e is XcpErrorException or XcpTimeoutException or XcpProtocolException)
+            {
+                Logger?.Log(LogLevel.Warn, $"XCP: write of '{matrix.Name}' (byte offset {offset}, {length} B) failed: {e.Message}");
+                SetState(CommunicationState.Running, $"Write of '{matrix.Name}' failed: {e.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Drains the pending cell writes into (offset, length) windows sorted by offset, merging
+    /// windows that touch or overlap. The queued bytes are copied back into the raw buffer first —
+    /// a poll that landed in between would otherwise have overwritten the edited cell. Requests
+    /// that no longer fit the layout are dropped with a warning.
+    /// </summary>
+    private List<(int Offset, int Length)> DequeueWriteWindows(MatrixVariable matrix)
+    {
+        var requests = new List<(int Offset, int Length)>();
+        while (matrix.TryDequeuePendingWrite(out var request))
+        {
+            if (request.ByteOffset < 0 || request.Bytes.Length == 0 ||
+                request.ByteOffset + request.Bytes.Length > matrix.Size)
+            {
+                Logger?.Log(LogLevel.Warn,
+                    $"XCP: pending write of '{matrix.Name}' at byte {request.ByteOffset} no longer fits the matrix layout; skipped.");
+                continue;
+            }
+
+            request.Bytes.CopyTo(matrix.RawData.AsSpan(request.ByteOffset));
+            requests.Add((request.ByteOffset, request.Bytes.Length));
+        }
+
+        requests.Sort((a, b) => a.Offset.CompareTo(b.Offset));
+        var windows = new List<(int Offset, int Length)>();
+        foreach (var request in requests)
+        {
+            if (windows.Count > 0)
+            {
+                var last = windows[^1];
+                if (request.Offset <= last.Offset + last.Length)
+                {
+                    var end = Math.Max(last.Offset + last.Length, request.Offset + request.Length);
+                    windows[^1] = (last.Offset, end - last.Offset);
+                    continue;
+                }
+            }
+
+            windows.Add(request);
+        }
+
+        return windows;
+    }
+
     #endregion
 
     #region On-request reads (IProtocolVariableReadProtocol)
 
-    /// <summary>Readable on request = a read/readWrite scalar bound to an On Request event.
-    /// (Matrix variables over XCP are not supported yet — a separate task.)</summary>
+    /// <summary>Readable on request = a read/readWrite scalar or matrix bound to an On Request event.</summary>
     public bool CanReadVariable(IProtocolVariable protocolVariable)
     {
         return Variables.Contains(protocolVariable) &&
                protocolVariable.IsCommunicated &&
-               protocolVariable is XcpProtocolVariable { Variable: ScalarVariable } &&
+               protocolVariable is XcpProtocolVariable { Variable: ScalarVariable or MatrixVariable } &&
                protocolVariable.ProtocolVariableSpecification is XcpVariableSpecification
                {
                    Direction: CommDirection.Read or CommDirection.ReadWrite,
@@ -1508,17 +1672,17 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
     {
         if (!CanReadVariable(protocolVariable) ||
             protocolVariable is not XcpProtocolVariable xcpVariable ||
-            xcpVariable.Variable is not ScalarVariable scalarVariable ||
             xcpVariable.ProtocolVariableSpecification is not XcpVariableSpecification spec)
         {
             throw new InvalidOperationException(
                 $"XCP: variable '{protocolVariable.Variable?.Name}' is not readable on request.");
         }
 
+        var name = xcpVariable.Variable.Name;
         var session = master;
         if (session is not { IsConnected: true })
         {
-            var message = $"Read of '{scalarVariable.Name}' skipped — not connected.";
+            var message = $"Read of '{name}' skipped — not connected.";
             Logger?.Log(LogLevel.Warn, $"XCP: {message}");
             throw new XcpProtocolException(message);
         }
@@ -1526,9 +1690,17 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
         try
         {
             var bytes = await session.ReadMemoryAsync(spec.AddressExtension, spec.Address, spec.Size, ct);
-            var value = session.Codec.DecodeValue(bytes, spec.DataType);
-            await ApplyBusValueAsync(xcpVariable, scalarVariable, value, DateTime.UtcNow);
-            Logger?.Log(LogLevel.Debug, $"XCP: read '{scalarVariable.Name}' on request ({bytes.Length} B at 0x{spec.Address:X}).");
+            switch (xcpVariable.Variable)
+            {
+                case MatrixVariable matrixVariable:
+                    await ApplyBusBlockAsync(xcpVariable, matrixVariable, bytes, DateTime.UtcNow);
+                    break;
+                case ScalarVariable scalarVariable:
+                    await ApplyBusValueAsync(xcpVariable, scalarVariable, session.Codec.DecodeValue(bytes, spec.DataType), DateTime.UtcNow);
+                    break;
+            }
+
+            Logger?.Log(LogLevel.Debug, $"XCP: read '{name}' on request ({bytes.Length} B at 0x{spec.Address:X}).");
         }
         catch (OperationCanceledException)
         {
@@ -1536,8 +1708,8 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
         }
         catch (Exception e) when (e is XcpErrorException or XcpTimeoutException or XcpProtocolException)
         {
-            Logger?.Log(LogLevel.Warn, $"XCP: read of '{scalarVariable.Name}' failed: {e.Message}");
-            SetState(CommunicationState.Running, $"Read of '{scalarVariable.Name}' failed: {e.Message}");
+            Logger?.Log(LogLevel.Warn, $"XCP: read of '{name}' failed: {e.Message}");
+            SetState(CommunicationState.Running, $"Read of '{name}' failed: {e.Message}");
             throw;
         }
     }

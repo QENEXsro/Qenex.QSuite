@@ -29,12 +29,18 @@ public class XcpVariableSpecification : ProtVariableSpecification
     /// <summary>XCP address extension (ECU-specific address space qualifier, usually 0).</summary>
     public byte AddressExtension { get; init; }
 
-    /// <summary>Value size in bytes; always matches the byte width of <see cref="DataType"/>.</summary>
+    /// <summary>Value size in bytes: the byte width of <see cref="DataType"/> for a scalar, the
+    /// whole raw block (<see cref="MatrixVariable.Size"/>) for a matrix.</summary>
     public int Size { get; init; }
 
     /// <summary>Value type used to decode/encode the raw memory bytes. Always equals the bound
-    /// variable's own value type so the decoded value can be assigned to it directly.</summary>
+    /// variable's own value type so the decoded value can be assigned to it directly;
+    /// <see cref="ValueDataType.Undefined"/> for a matrix, whose block travels raw and is decoded
+    /// by the variable's own layout.</summary>
     public ValueDataType DataType { get; init; }
+
+    /// <summary>Largest matrix data block transferred over XCP: 64 × 64 × 4 B, axes on top (decision of Radek 2026-09-25).</summary>
+    public const int MaxMatrixBytes = 64 * 64 * 4;
 
     /// <summary>Transfer direction: polled read, operator write, or both.</summary>
     public CommDirection Direction { get; init; } = CommDirection.Read;
@@ -102,9 +108,28 @@ public class XcpVariableSpecification : ProtVariableSpecification
         var direction = ParseDirection(settings);
         var multiplier = ParseMultiplier(settings);
         var variableEvent = ResolveEvent(settings, variableEvents);
-        var dataType = ResolveDataType(settings, variable);
-        var size = ResolveSize(settings, dataType);
+        ValueDataType dataType;
+        int size;
+        if (variable is MatrixVariable matrix)
+        {
+            (dataType, size) = ResolveMatrixLayout(settings, matrix);
+        }
+        else
+        {
+            dataType = ResolveDataType(settings, variable);
+            size = ResolveSize(settings, dataType);
+        }
+
         var binding = variableEvent == null ? null : XcpEventExtraParams.GetEventBinding(variableEvent, logger);
+
+        // A matrix block is far too large for an ODT and changes rarely: it is polled by a periodic
+        // event or read on request, never acquired via DAQ or streamed as STIM.
+        if (variable is MatrixVariable && binding != null)
+        {
+            throw new ArgumentException(
+                $"Matrix variable '{variable.Name}' cannot bind to the DAQ/STIM event channel '{variableEvent!.Name}'; " +
+                "a matrix is polled by a periodic event or read on request.");
+        }
 
         if (variableEvent == null && direction != CommDirection.Write)
         {
@@ -246,6 +271,34 @@ public class XcpVariableSpecification : ProtVariableSpecification
         }
 
         return dataType;
+    }
+
+    /// <summary>Matrix: the whole raw block (axes + data) is one XCP transfer; elements are decoded
+    /// by the variable's own layout and endianness, so there is no scalar type. Optional commParam
+    /// size must match the layout; dataType is ignored (per-section types live on the variable).</summary>
+    private static (ValueDataType DataType, int Size) ResolveMatrixLayout(IReadOnlyDictionary<string, string> settings,
+        MatrixVariable matrix)
+    {
+        var layoutError = matrix.ValidateLayout();
+        if (layoutError != null)
+        {
+            throw new ArgumentException($"Matrix variable '{matrix.Name}' has an invalid layout: {layoutError}");
+        }
+
+        var dataBytes = matrix.DataCount * matrix.GetElementSize(MatrixSectionKind.Data);
+        if (dataBytes > MaxMatrixBytes)
+        {
+            throw new ArgumentException(
+                $"Matrix variable '{matrix.Name}' has {dataBytes} bytes of data; the XCP limit is {MaxMatrixBytes} bytes (64 × 64 × 4).");
+        }
+
+        if (settings.TryGetValue("size", out var value) &&
+            (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var size) || size != matrix.Size))
+        {
+            throw new ArgumentException($"commParam size '{value}' does not match the {matrix.Size}-byte matrix layout.");
+        }
+
+        return (ValueDataType.Undefined, matrix.Size);
     }
 
     private static int ResolveSize(IReadOnlyDictionary<string, string> settings, ValueDataType dataType)

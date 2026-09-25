@@ -65,6 +65,8 @@ internal static class Program
         TcpIntegrationTests.Run();
         TcpDaqIntegrationTests.Run();
         TcpStimIntegrationTests.Run();
+        BlockModeTests.Run();
+        MatrixIntegrationTests.Run();
 
         Console.WriteLine(failures == 0 ? "ALL TESTS PASSED" : $"{failures} TEST(S) FAILED");
         return failures == 0 ? 0 : 1;

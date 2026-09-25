@@ -25,6 +25,8 @@ public sealed class XcpCodec
 
     public static byte[] BuildSynch() => [XcpCommand.Synch];
 
+    public static byte[] BuildGetCommModeInfo() => [XcpCommand.GetCommModeInfo];
+
     /// <summary>SET_MTA: 0xF6 | reserved WORD | address extension | address DWORD.</summary>
     public byte[] BuildSetMta(byte addressExtension, uint address)
     {
@@ -63,6 +65,40 @@ public sealed class XcpCodec
         var packet = new byte[2 + data.Length];
         packet[0] = XcpCommand.Download;
         packet[1] = (byte)data.Length;
+        data.CopyTo(packet.AsSpan(2));
+        return packet;
+    }
+
+    /// <summary>Master block mode: first packet of a block — 0xF0 | number of elements of the WHOLE
+    /// block (1..255) | the first data bytes (at most MAX_CTO − 2). The rest follows as DOWNLOAD_NEXT.</summary>
+    public static byte[] BuildDownloadBlockStart(int blockLength, ReadOnlySpan<byte> data)
+    {
+        if (blockLength is < 1 or > byte.MaxValue || data.Length < 1 || data.Length > blockLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(blockLength), blockLength,
+                "A DOWNLOAD block carries 1..255 elements and its first packet at least one of them.");
+        }
+
+        var packet = new byte[2 + data.Length];
+        packet[0] = XcpCommand.Download;
+        packet[1] = (byte)blockLength;
+        data.CopyTo(packet.AsSpan(2));
+        return packet;
+    }
+
+    /// <summary>Master block mode continuation: 0xEF | number of elements REMAINING in the block
+    /// including this packet | data. The slave acknowledges the packet that brings the remainder to 0.</summary>
+    public static byte[] BuildDownloadNext(int remaining, ReadOnlySpan<byte> data)
+    {
+        if (remaining is < 1 or > byte.MaxValue || data.Length < 1 || data.Length > remaining)
+        {
+            throw new ArgumentOutOfRangeException(nameof(remaining), remaining,
+                "DOWNLOAD_NEXT carries 1..255 remaining elements and at least one data byte of them.");
+        }
+
+        var packet = new byte[2 + data.Length];
+        packet[0] = XcpCommand.DownloadNext;
+        packet[1] = (byte)remaining;
         data.CopyTo(packet.AsSpan(2));
         return packet;
     }
@@ -267,7 +303,26 @@ public sealed class XcpCodec
             MaxCto: packet[3],
             MaxDto: maxDto,
             ProtocolLayerVersion: packet[6],
-            TransportLayerVersion: packet[7]);
+            TransportLayerVersion: packet[7],
+            SupportsSlaveBlockMode: (commModeBasic & 0x40) != 0,
+            HasOptionalCommModeInfo: (commModeBasic & 0x80) != 0);
+    }
+
+    /// <summary>Parses the GET_COMM_MODE_INFO positive response: 0xFF | reserved | COMM_MODE_OPTIONAL |
+    /// reserved | MAX_BS | MIN_ST | QUEUE_SIZE | XCP driver version.</summary>
+    public static XcpCommModeInfo ParseCommModeInfoResponse(ReadOnlySpan<byte> packet)
+    {
+        if (packet.Length < 8 || packet[0] != 0xFF)
+        {
+            throw new XcpProtocolException($"Malformed GET_COMM_MODE_INFO response ({packet.Length} bytes).");
+        }
+
+        return new XcpCommModeInfo(
+            CommModeOptional: packet[2],
+            MaxBs: packet[4],
+            MinSt: packet[5],
+            QueueSize: packet[6],
+            DriverVersion: packet[7]);
     }
 
     /// <summary>Parses the GET_STATUS positive response (full packet including the leading 0xFF).</summary>
