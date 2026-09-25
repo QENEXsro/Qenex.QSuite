@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -940,21 +940,45 @@ public partial class ShellWindowModel
 
             var findings = ReportProjectValidationFindings(projectData, Path.GetFileName(filePath));
 
-            await CloseProjectWorkspacesAsync();
-            isEditProjectEnabled = false;
-            isEditVariableEnabled = false;
-            isEditConversionEnabled = false;
-            isEditPresentationEnabled = false;
-            isEditEventEnabled = false;
-            realProjectData = RealProjectData.CreateRealProjectData(driverPlugins, protocolPlugins, projectData, ShellWindow.MainAppSettings.ScriptEngine, logger);
-            solutionExplorerViewModel.ReloadProjectData(realProjectData);
-            LoadProjectWorkspaces(projectData.Workspaces);
-            LoadProjectScriptDocuments(projectData.ScriptDocuments);
-            LoadProjectPythonInterpreter(projectData.WorkspaceLayout);
-            LoadProjectVariableWatch(projectData.WorkspaceLayout);
-            await Application.Current.Dispatcher.InvokeAsync(
-                () => LoadWorkspaceLayoutFromData(projectData.WorkspaceLayout, projectData.FailedWorkspaces.Count > 0),
-                DispatcherPriority.ApplicationIdle);
+            // The docking is rebuilt in several steps (old panes removed, new panes created at
+            // their default place, saved layout restored). Hide it meanwhile so the user sees one
+            // transition instead of the workspace flashing twice (Radek 2026-09-25).
+            var docking = shellRadDocking;
+            if (docking != null)
+            {
+                docking.Opacity = 0;
+            }
+
+            try
+            {
+                await CloseProjectWorkspacesAsync();
+                isEditProjectEnabled = false;
+                isEditVariableEnabled = false;
+                isEditConversionEnabled = false;
+                isEditPresentationEnabled = false;
+                isEditEventEnabled = false;
+                realProjectData = RealProjectData.CreateRealProjectData(driverPlugins, protocolPlugins, projectData, ShellWindow.MainAppSettings.ScriptEngine, logger);
+                solutionExplorerViewModel.ReloadProjectData(realProjectData);
+                LoadProjectWorkspaces(projectData.Workspaces);
+                LoadProjectScriptDocuments(projectData.ScriptDocuments);
+                LoadProjectPythonInterpreter(projectData.WorkspaceLayout);
+                LoadProjectVariableWatch(projectData.WorkspaceLayout);
+
+                // Restore the saved layout in the same dispatcher pass: the panes created from
+                // PanesSource are already in the docking tree (UpdateLayout lets the docking place
+                // them), so nothing is rendered between the default placement and the restored
+                // layout. Previously deferred to ApplicationIdle, which rendered the default
+                // placement first and then the restored one - the double flash.
+                docking?.UpdateLayout();
+                LoadWorkspaceLayoutFromData(projectData.WorkspaceLayout, projectData.FailedWorkspaces.Count > 0);
+            }
+            finally
+            {
+                if (docking != null)
+                {
+                    docking.Opacity = 1;
+                }
+            }
                 
             currentProjectFilePath = Path.GetFullPath(filePath);
             currentProjectPassword = password;
