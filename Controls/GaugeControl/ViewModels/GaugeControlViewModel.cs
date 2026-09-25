@@ -54,9 +54,28 @@ public class GaugeControlViewModel : ControlBase
 			field = value;
 			OnPropertyChanged();
 			OnPropertyChanged(nameof(DisplayValue));
+			OnPropertyChanged(nameof(ValueText));
 			UpdateAlarmState();
 		}
 	}
+
+	/// <summary>False until the first value read from the device in this run: the needle rests
+	/// at the scale minimum and the numeric caption is empty.</summary>
+	[IgnoreDataMember]
+	public bool HasValue
+	{
+		get;
+		private set
+		{
+			field = value;
+			OnPropertyChanged();
+			OnPropertyChanged(nameof(ValueText));
+		}
+	}
+
+	/// <summary>Numeric caption under the gauge; empty before the first value.</summary>
+	[IgnoreDataMember]
+	public string ValueText => HasValue ? Value.ToString("0.###", CultureInfo.InvariantCulture) : string.Empty;
 
 	/// <summary>Value shown by the needle/bar, clamped to the scale range - an out-of-range
 	/// value must not draw the indicator beyond the scale ends.</summary>
@@ -236,7 +255,20 @@ public class GaugeControlViewModel : ControlBase
 		if ((protVariable.Timestamp - previousUpdateTime).TotalMilliseconds < RefreshTime) return;
 		previousUpdateTime = protVariable.Timestamp;
 
-		_ = Application.Current.Dispatcher.BeginInvoke(() => Value = engValue);
+		_ = Application.Current.Dispatcher.BeginInvoke(() =>
+		{
+			Value = engValue;
+			HasValue = true;
+		});
+	}
+
+	/// <summary>Edit -> Run: nothing has been read from the device yet, so the gauge shows nothing
+	/// (needle at the scale minimum, empty caption) until the first poll / Read (Radek 2026-09-25).</summary>
+	protected override void OnEditToRun()
+	{
+		previousUpdateTime = DateTime.MinValue;
+		HasValue = false;
+		Value = Minimum;
 	}
 
 	[OnDeserialized]

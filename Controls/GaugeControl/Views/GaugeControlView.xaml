@@ -182,7 +182,7 @@
 
 		<!-- Current value + unit -->
 		<StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,3,0,0">
-			<q:QTextBlock Text="{Binding Value, Mode=OneWay, StringFormat={}{0:0.###}}"/>
+			<q:QTextBlock Text="{Binding ValueText, Mode=OneWay}"/>
 			<q:QTextBlock Text="[" Margin="6,0,3,0"/>
 			<q:QTextBlock Text="{Binding VariableUnit, Mode=OneWay}"/>
 			<q:QTextBlock Text="]" Margin="3,0,0,0"/>
