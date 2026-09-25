@@ -34,7 +34,7 @@ public class MatrixCellViewModel : INotifyPropertyChanged
     public bool IsPlaceholder { get; }
     public bool IsAxis => !IsPlaceholder && Kind != MatrixSectionKind.Data;
 
-    /// <summary>Read-mode display text (per-section presentation of the current value).</summary>
+    /// <summary>Read-mode display text (per-section presentation of the last value read from the device).</summary>
     public string Text { get; set { field = value; OnPropertyChanged(); } } = string.Empty;
 
     /// <summary>Write-mode edit text; user edits mark the cell dirty.</summary>
@@ -58,6 +58,7 @@ public class MatrixCellViewModel : INotifyPropertyChanged
         }
     } = string.Empty;
 
+    /// <summary>Edited value not written yet (yellow tint, enables the Write button).</summary>
     public bool IsDirty
     {
         get;
@@ -70,11 +71,26 @@ public class MatrixCellViewModel : INotifyPropertyChanged
 
             field = value;
             OnPropertyChanged();
-            owner.OnCellDirtyChanged();
+            owner.OnCellStateChanged();
         }
     }
 
-    public bool IsWriteError { get; set { field = value; OnPropertyChanged(); } }
+    /// <summary>Last write of this cell failed (red tint of the cell and of the Write button).</summary>
+    public bool IsWriteError
+    {
+        get;
+        set
+        {
+            if (field == value)
+            {
+                return;
+            }
+
+            field = value;
+            OnPropertyChanged();
+            owner.OnCellStateChanged();
+        }
+    }
 
     /// <summary>Enter in the edit box: immediate write when Write on Enter is ticked.</summary>
     public ICommand CommitCommand => field ??= new RelayCommand<object>(_ => owner.CommitCell(this));

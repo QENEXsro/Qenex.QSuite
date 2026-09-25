@@ -20,8 +20,8 @@
 			<BooleanToVisibilityConverter x:Key="TrueToVisible"/>
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
 			<conv:EmptyToCollapsedConverter x:Key="EmptyToCollapsed"/>
-			<conv:CellStateToBackgroundConverter x:Key="CellStateBackground"/>
-			<conv:ReadErrorToBackgroundConverter x:Key="ReadErrorBackground"/>
+			<conv:EditStateToBackgroundConverter x:Key="EditStateBackground"/>
+			<conv:ErrorToBackgroundConverter x:Key="ErrorBackground"/>
 		</ResourceDictionary>
 	</UserControl.Resources>
 
@@ -30,11 +30,12 @@
 			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 			<telerik:RadMenuItem Header="Write Mode" IsCheckable="True" IsChecked="{Binding IsWriteMode, Mode=TwoWay}"
 			                     IsEnabled="{Binding CanWrite}"/>
+			<!-- Same option as in the Single-Signal and Watch Table controls: Enter writes immediately;
+			     unticked, the edit stays pending and the Write button in the header sends it -->
 			<telerik:RadMenuItem Header="Write on Enter" IsCheckable="True" IsChecked="{Binding WriteOnEnter, Mode=TwoWay}"
 			                     IsEnabled="{Binding IsWriteActive}"/>
-			<!-- Auto Read has no meaning for a matrix read on request (On Request event) -->
-			<telerik:RadMenuItem Header="Auto Read" IsCheckable="True" IsChecked="{Binding AutoRead, Mode=TwoWay}"
-			                     IsEnabled="{Binding IsAutoReadApplicable}"/>
+			<!-- Read on request is the button in the header only (same as Single-Signal/WatchTable);
+			     "Auto Read" removed: the table always follows the device (poll / Read) -->
 		</telerik:RadContextMenu>
 	</telerik:RadContextMenu.ContextMenu>
 
@@ -44,12 +45,13 @@
 			<RowDefinition Height="*"/>
 		</Grid.RowDefinitions>
 
-		<!-- Header: settings expander | variable label | read/write toolbar -->
+		<!-- Header: settings expander | Read | Write | variable label (same order as Single-Signal) -->
 		<Grid Grid.Row="0">
 			<Grid.ColumnDefinitions>
 				<ColumnDefinition Width="Auto"/>
-				<ColumnDefinition Width="*"/>
 				<ColumnDefinition Width="Auto"/>
+				<ColumnDefinition Width="Auto"/>
+				<ColumnDefinition Width="*"/>
 			</Grid.ColumnDefinitions>
 
 			<telerik:RadExpander Grid.Column="0" Style="{StaticResource SquareExpanderStyle}" HorizontalAlignment="Left">
@@ -73,25 +75,30 @@
 				</Grid>
 			</telerik:RadExpander>
 
-			<StackPanel Grid.Column="1" Orientation="Horizontal" Margin="5,0,0,3" VerticalAlignment="Center">
+			<!-- Read on request: next to the settings arrow, the arrow button's size (HeaderButtonStyle
+			     in SharedStyles, 20 px); shown only for a matrix bound to an On Request event, red
+			     after a failed read. Margin top 1 = the expander header's 1 px border above the arrow. -->
+			<telerik:RadButton Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
+			                   Style="{StaticResource HeaderButtonStyle}" Margin="3,1,0,0"
+			                   Background="{Binding IsReadError, Converter={StaticResource ErrorBackground}}"
+			                   IsEnabled="{Binding CanReadNow}"
+			                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
+			                   ToolTip="Read the matrix from the device once (On Request event; discards pending edits)"/>
+
+			<!-- Write button (same as Single-Signal): only in write mode with Write on Enter off;
+			     enabled once some cell is edited, greys back after the write, red when a cell failed -->
+			<telerik:RadButton Grid.Column="2" Content="Write" Command="{Binding WriteDirtyCommand}"
+			                   Style="{StaticResource HeaderButtonStyle}" Margin="3,1,0,0"
+			                   Background="{Binding HasWriteErrorCells, Converter={StaticResource ErrorBackground}}"
+			                   IsEnabled="{Binding CanWriteDirty}"
+			                   Visibility="{Binding IsWriteButtonVisible, Converter={StaticResource TrueToVisible}}"
+			                   ToolTip="Write all edited (highlighted) cells to the device"/>
+
+			<StackPanel Grid.Column="3" Orientation="Horizontal" Margin="5,0,0,3" VerticalAlignment="Center">
 				<q:QTextBlock Text="{Binding VariableLabel}" TextWrapping="NoWrap"/>
 				<q:QTextBlock Text=" ["/>
 				<q:QTextBlock Text="{Binding DataUnit}"/>
 				<q:QTextBlock Text="]"/>
-			</StackPanel>
-
-			<!-- Ticky (Auto Read, Write on Enter) jsou v kontextovem menu; tady jen tlacitka -->
-			<StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="5,0,0,0">
-				<!-- Read on request: enabled only for a matrix bound to an On Request event;
-				     a periodically polled matrix keeps it disabled (rozhodnuti Radka 2026-09-23) -->
-				<telerik:RadButton Content="Read" Command="{Binding ReadCommand}" Padding="8,1" Margin="0,0,5,0"
-				                   IsEnabled="{Binding CanReadNow}"
-				                   Background="{Binding IsReadError, Converter={StaticResource ReadErrorBackground}}"
-				                   ToolTip="Read the matrix from the device once (On Request event; discards pending edits)"/>
-				<telerik:RadButton Content="Write" Command="{Binding WriteDirtyCommand}" Padding="8,1"
-				                   IsEnabled="{Binding CanWriteDirty}"
-				                   Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToVisible}}"
-				                   ToolTip="Write all edited (highlighted) cells to the device"/>
 			</StackPanel>
 		</Grid>
 
@@ -154,20 +161,27 @@
 												     registrovany v ShellWindow.Resources (barvy tematu).
 												     Display je read-only QTextBox jako u SignalControlu: QTextBlock
 												     (potomek TextBlocku) by uvnitr DataTemplate implicitni styl
-												     z ShellWindow nedostal a text by nemel barvy tematu. -->
+												     z ShellWindow nedostal a text by nemel barvy tematu.
+												     Red after a failed on-request read (same as the Read button). -->
 												<q:QTextBox x:Name="DisplayText" Text="{Binding Text, Mode=OneWay}" TextAlignment="Right"
 												            IsReadOnly="True"
+												            Background="{Binding DataContext.IsReadError,
+												                         RelativeSource={RelativeSource AncestorType=UserControl},
+												                         Converter={StaticResource ErrorBackground}}"
 												            Visibility="{Binding DataContext.IsWriteActive,
 												                         RelativeSource={RelativeSource AncestorType=UserControl},
 												                         Converter={StaticResource TrueToCollapsed}}"/>
+												<!-- Edit cell: orange in write mode (editable, whatever Write on Enter), yellow
+												     while the edited value is pending, red after a failed write -->
 												<q:QTextBox x:Name="EditText" Text="{Binding EditText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 												            TextAlignment="Right"
 												            Visibility="{Binding DataContext.IsWriteActive,
 												                         RelativeSource={RelativeSource AncestorType=UserControl},
 												                         Converter={StaticResource TrueToVisible}}"
-												            ToolTip="Engineering value; Enter writes immediately when Write on Enter is ticked">
+												            ToolTip="Engineering value; Enter writes it (Write on Enter) or the Write button sends it">
 													<q:QTextBox.Background>
-														<MultiBinding Converter="{StaticResource CellStateBackground}">
+														<MultiBinding Converter="{StaticResource EditStateBackground}">
+															<Binding Path="DataContext.IsWriteActive" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
 															<Binding Path="IsDirty"/>
 															<Binding Path="IsWriteError"/>
 														</MultiBinding>
