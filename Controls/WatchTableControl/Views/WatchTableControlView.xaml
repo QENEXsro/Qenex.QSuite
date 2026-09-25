@@ -23,13 +23,19 @@
 			<control:BindingProxy x:Key="RootProxy" Data="{Binding}"/>
 			<BooleanToVisibilityConverter x:Key="TrueToVisible"/>
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
-			<conv:WriteErrorToBackgroundConverter x:Key="WriteErrorBackground"/>
+			<conv:EditStateToBackgroundConverter x:Key="EditStateBackground"/>
+			<conv:ErrorToBackgroundConverter x:Key="ErrorBackground"/>
 		</ResourceDictionary>
 	</UserControl.Resources>
 
 	<telerik:RadContextMenu.ContextMenu>
 		<telerik:RadContextMenu>
+			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 			<telerik:RadMenuItem Header="Remove" Command="{Binding RemoveSelectedCommand}"/>
+			<!-- Same option as in the Matrix and Single-Signal controls: Enter writes immediately;
+			     unticked, the edit stays pending and the row's Write button sends it -->
+			<telerik:RadMenuItem Header="Write on Enter" IsCheckable="True" IsChecked="{Binding WriteOnEnter, Mode=TwoWay}"
+			                     IsEnabled="{Binding HasWriteActiveRows}"/>
 			<telerik:RadMenuItem Header="Columns">
 				<telerik:RadMenuItem Header="Name" IsCheckable="True" StaysOpenOnClick="True"
 				                     IsChecked="{Binding IsNameColumnVisible, Mode=TwoWay}"/>
@@ -41,8 +47,9 @@
 				                     IsChecked="{Binding IsTimeColumnVisible, Mode=TwoWay}"/>
 				<telerik:RadMenuItem Header="Write" IsCheckable="True" StaysOpenOnClick="True"
 				                     IsChecked="{Binding IsWriteColumnVisible, Mode=TwoWay}"/>
+				<telerik:RadMenuItem Header="Read" IsCheckable="True" StaysOpenOnClick="True"
+				                     IsChecked="{Binding IsReadColumnVisible, Mode=TwoWay}"/>
 			</telerik:RadMenuItem>
-			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
 		</telerik:RadContextMenu>
 	</telerik:RadContextMenu.ContextMenu>
 
@@ -101,16 +108,25 @@
 						<DataTemplate>
 							<Grid>
 								<TextBlock Text="{Binding Value}" TextAlignment="Right"
+								           Background="{Binding IsReadError, Converter={StaticResource ErrorBackground}}"
 								           Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToCollapsed}}"/>
 								<!-- No local Style: it would override the implicit QTextBox theme style
-								     registered in ShellWindow.Resources (theme colors). -->
+								     registered in ShellWindow.Resources (theme colors).
+								     Orange in write mode (editable, whatever Write on Enter), yellow while the
+								     edited value is pending, red after a failed write. -->
 								<q:QTextBox Text="{Binding EditValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
 								            TextAlignment="Right"
 								            Visibility="{Binding IsWriteActive, Converter={StaticResource TrueToVisible}}"
-								            Background="{Binding IsWriteError, Converter={StaticResource WriteErrorBackground}}"
-								            ToolTip="Engineering value; Enter writes it to the device">
+								            ToolTip="Engineering value; Enter writes it (Write on Enter) or the Write button sends it">
+									<q:QTextBox.Background>
+										<MultiBinding Converter="{StaticResource EditStateBackground}">
+											<Binding Path="IsWriteActive"/>
+											<Binding Path="IsDirty"/>
+											<Binding Path="IsWriteError"/>
+										</MultiBinding>
+									</q:QTextBox.Background>
 									<q:QTextBox.InputBindings>
-										<KeyBinding Key="Enter" Command="{Binding WriteCommand}"/>
+										<KeyBinding Key="Enter" Command="{Binding CommitCommand}"/>
 									</q:QTextBox.InputBindings>
 								</q:QTextBox>
 							</Grid>
@@ -125,11 +141,35 @@
 				                            IsVisible="{Binding Data.IsWriteColumnVisible, Source={StaticResource RootProxy}, Mode=TwoWay}">
 					<telerik:GridViewDataColumn.CellTemplate>
 						<DataTemplate>
-							<!-- Per-row write mode toggle; disabled when the protocol cannot write the variable -->
-							<CheckBox IsChecked="{Binding IsWriteMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-							          IsEnabled="{Binding CanWrite}"
-							          HorizontalAlignment="Center" VerticalAlignment="Center"
-							          ToolTip="Write mode for this row (available only when the protocol allows writing this variable)"/>
+							<!-- Per-row write mode toggle (disabled when the protocol cannot write the variable)
+							     and the row's Write button: only in write mode with Write on Enter off, enabled
+							     once the value is edited, greys back after the write (same as the Matrix control) -->
+							<StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+								<CheckBox IsChecked="{Binding IsWriteMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+								          IsEnabled="{Binding CanWrite}" VerticalAlignment="Center"
+								          ToolTip="Write mode for this row (available only when the protocol allows writing this variable)"/>
+								<telerik:RadButton Content="Write" Command="{Binding WriteCommand}" Padding="6,0" Margin="4,0,0,0"
+								                   Background="{Binding IsWriteError, Converter={StaticResource ErrorBackground}}"
+								                   IsEnabled="{Binding CanWriteDirty}"
+								                   Visibility="{Binding IsWriteButtonVisible, Converter={StaticResource TrueToVisible}}"
+								                   VerticalAlignment="Center"
+								                   ToolTip="Write the edited value of this row to the device"/>
+							</StackPanel>
+						</DataTemplate>
+					</telerik:GridViewDataColumn.CellTemplate>
+				</telerik:GridViewDataColumn>
+				<telerik:GridViewDataColumn UniqueName="Read" Header="Read" Width="Auto" IsSortable="False"
+				                            IsVisible="{Binding Data.IsReadColumnVisible, Source={StaticResource RootProxy}, Mode=TwoWay}">
+					<telerik:GridViewDataColumn.CellTemplate>
+						<DataTemplate>
+							<!-- Per-row read on request: only for a variable bound to an On Request event
+							     (Collapsed otherwise, same as Single-Signal); red after a failed read -->
+							<telerik:RadButton Content="Read" Command="{Binding ReadCommand}" Padding="6,0"
+							                   Background="{Binding IsReadError, Converter={StaticResource ErrorBackground}}"
+							                   IsEnabled="{Binding CanReadNow}"
+							                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
+							                   HorizontalAlignment="Center" VerticalAlignment="Center"
+							                   ToolTip="Read this variable from the device once (On Request event)"/>
 						</DataTemplate>
 					</telerik:GridViewDataColumn.CellTemplate>
 				</telerik:GridViewDataColumn>

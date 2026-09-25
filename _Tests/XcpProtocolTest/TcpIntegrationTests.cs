@@ -25,6 +25,7 @@ internal static class TcpIntegrationTests
         Framing_LenAndCtrOnEveryCommand().GetAwaiter().GetResult();
         ChunkedResponses_AreReassembled().GetAwaiter().GetResult();
         OperatorWrite_DoubleIsSingleDownload().GetAwaiter().GetResult();
+        OnRequestEvent_ReadOnceNotPolled().GetAwaiter().GetResult();
         DefaultAndEmptySettings_AreValid();
         CompatibleDrivers_NarrowToTcpClient();
     }
@@ -249,6 +250,84 @@ internal static class TcpIntegrationTests
             Check(download.Length == 10 && download[1] == 8 && download.Skip(2).SequenceEqual(expected),
                 "tcp write: DOWNLOAD carries the raw 8-byte double image");
         }
+    }
+
+    /// <summary>
+    /// On Request event: the variable is excluded from polling, CanReadVariable reports it (and not
+    /// the polled one), ReadVariableAsync performs exactly one SHORT_UPLOAD and lands the value,
+    /// the variable's RequestReadAsync notification reaches the protocol, and a read while
+    /// disconnected throws instead of failing silently.
+    /// </summary>
+    private static async Task OnRequestEvent_ReadOnceNotPolled()
+    {
+        var protocol = new XcpTcp
+        {
+            IsEnabled = true,
+            RawSettings = "requestTimeoutMs=\"100\""
+        };
+        protocol.SetConfiguration();
+
+        var pollEvent = new PeriodicVarEvent { Name = "poll20ms", Period = 20, Unit = TimeUnit.Milisec };
+        var onRequestEvent = new OnRequestVarEvent { Name = "onRequest" };
+        var onRequestVariable = DoubleVariable("MapCell");
+        var polledVariable = DoubleVariable("Rpm");
+        polledVariable.Id = 2;
+
+        var onRequestProtocolVariable = protocol.CreateProtocolVariable(onRequestVariable, [pollEvent, onRequestEvent],
+            "address=\"0x1000\";direction=\"read\";eventRef=\"onRequest\"", true)!;
+        var polledProtocolVariable = protocol.CreateProtocolVariable(polledVariable, [pollEvent, onRequestEvent],
+            "address=\"0x1000\";direction=\"read\";eventRef=\"poll20ms\"", true)!;
+        protocol.AddVariable(onRequestProtocolVariable);
+        protocol.AddVariable(polledProtocolVariable);
+
+        var slave = new SimulatedTcpSlave(protocol);
+        BinaryPrimitives.WriteDoubleLittleEndian(slave.Memory, 12.5);
+
+        Check(protocol.CanReadVariable(onRequestProtocolVariable), "on request: variable on the On Request event is readable on request");
+        Check(!protocol.CanReadVariable(polledProtocolVariable), "on request: periodically polled variable is NOT readable on request");
+
+        await protocol.StartAsync();
+        await WaitUntilAsync(() => (double)polledVariable.GetValue() == 12.5);
+        await WaitUntilAsync(() => slave.CountSent(XcpCommand.ShortUpload) >= 3);
+
+        Check((double)onRequestVariable.GetValue() == 0d, "on request: variable is not polled while the poll loop runs");
+
+        var notified = 0;
+        onRequestProtocolVariable.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref notified); return Task.CompletedTask; });
+
+        await protocol.ReadVariableAsync(onRequestProtocolVariable);
+        Check((double)onRequestVariable.GetValue() == 12.5, "on request: ReadVariableAsync landed the value in the variable");
+        Check(notified == 1, "on request: exactly one value-changed notification per read");
+        Check(onRequestVariable.Timestamp > DateTime.UtcNow.AddSeconds(-5), "on request: timestamp stamped by the read");
+
+        // A new device value must not appear without another request (still not polled)...
+        BinaryPrimitives.WriteDoubleLittleEndian(slave.Memory, 7.25);
+        await WaitUntilAsync(() => (double)polledVariable.GetValue() == 7.25);
+        await Task.Delay(60);
+        Check((double)onRequestVariable.GetValue() == 12.5 && notified == 1,
+            "on request: no further update without a request");
+
+        // ...and the variable's own request notification reaches the protocol (module wiring).
+        onRequestProtocolVariable.SubscribeAsyncReadRequested((pv, ct) => protocol.ReadVariableAsync(pv, ct));
+        await onRequestProtocolVariable.RequestReadAsync();
+        Check((double)onRequestVariable.GetValue() == 7.25 && notified == 2,
+            "on request: RequestReadAsync notification performed the second read");
+
+        await protocol.StopAsync();
+
+        var threw = false;
+        try
+        {
+            await protocol.ReadVariableAsync(onRequestProtocolVariable);
+        }
+        catch (XcpProtocolException)
+        {
+            threw = true;
+        }
+
+        Check(threw, "on request: read while disconnected throws XcpProtocolException");
+        Check(!protocol.CanReadVariable(new XcpProtocolVariable { Variable = onRequestVariable, IsCommunicated = true }),
+            "on request: a foreign protocol variable is not readable");
     }
 
     private static void DefaultAndEmptySettings_AreValid()

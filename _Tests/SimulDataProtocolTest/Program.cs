@@ -19,6 +19,8 @@ using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.ModuleXmlHandler;
 using Qenex.QSuite.ModuleXmlHandler.XmlStructure;
 using Qenex.QSuite.Protocols.Protocol;
+using Qenex.QSuite.Drivers.Driver;
+using Qenex.QSuite.Drivers.SimDataDriver;
 using Qenex.QSuite.Protocols.SimulDataProtocol;
 using Qenex.QSuite.Variables.QVariables;
 using Qenex.QSuite.Variables.QVariables.Values;
@@ -36,6 +38,9 @@ await RunTest("T4 matrix pending writes re-applied", Test4_PendingWrites);
 await RunTest("T5 parameters are not generated over", Test5_ParametersUntouched);
 await RunTest("T6 installer example Qenex_Sim_SimulData_AllSignals loads and runs", Test6_DemoProject);
 await RunTest("T7 commParam round trip keeps amp/freq/nonlin/init (no id)", Test7_CommParamRoundTrip);
+await RunTest("T8 On Request event: nothing generated, one sample per read", Test8_OnRequestRead);
+await RunTest("T9 Simulation driver carries reads and writes to the protocol", Test9_DriverCommands);
+await RunTest("T10 readWrite parameter on a periodic event is read back like on a device", Test10_ParameterReadBack);
 
 Console.WriteLine();
 Console.WriteLine("==== SUMMARY ====");
@@ -287,6 +292,182 @@ async Task<(bool, string)> Test4_PendingWrites()
     await ((IProtocolVariableWriteProtocol)protocol).WriteVariableAsync(pv);
 
     return (canWrite && reapplied && drained, $"canWrite={canWrite}; reapplied={reapplied}; drained={drained}");
+}
+
+// T10: a readWrite parameter (hold) on a periodic event is polled like a Modbus/XCP variable:
+// its current value is re-announced every period with a fresh timestamp and never generated
+// over (a written value stays); a write-only parameter is never announced.
+async Task<(bool, string)> Test10_ParameterReadBack()
+{
+    var protocol = NewProtocol();
+    var events = new IVarEvent[] { Event("e50", 50) };
+    var hold = DoubleVariable(1, "Hold");
+    var writeOnly = DoubleVariable(2, "Nonlin");
+    var strain = DoubleVariable(3, "Strain");
+    Add(protocol, hold, events, "direction=\"readWrite\";eventRef=\"e50\";id=\"Hold\";signal=\"hold\"");
+    Add(protocol, writeOnly, events, "direction=\"write\";eventRef=\"e50\";id=\"Nonlin\";signal=\"nonlin\"");
+    Add(protocol, strain, events, "direction=\"read\";eventRef=\"e50\";id=\"Strain\";signal=\"laosstrain\"");
+    var pvHold = protocol.Variables[0];
+    var pvWriteOnly = protocol.Variables[1];
+
+    var holdNotified = 0;
+    var writeOnlyNotified = 0;
+    pvHold.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref holdNotified); return Task.CompletedTask; });
+    pvWriteOnly.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref writeOnlyNotified); return Task.CompletedTask; });
+
+    await protocol.StartAsync();
+    await Task.Delay(300);
+    var running = protocol.State == CommunicationState.Running;
+    var polledBefore = holdNotified;
+
+    // Operator write from a control: the value lives in the variable, the next polls read it back.
+    hold.TrySetEngValue(1.0);
+    hold.Timestamp = DateTime.UtcNow.AddMinutes(-1);
+    await Task.Delay(300);
+    var polledAfter = holdNotified - polledBefore;
+    var readBack = polledBefore >= 3 && polledAfter >= 3 && Math.Abs(hold.GetEngValue() - 1.0) < 1e-9
+                   && hold.Timestamp > DateTime.UtcNow.AddSeconds(-5);
+    var writeOnlySilent = writeOnlyNotified == 0;
+    var strainRuns = strain.GetEngValue() != 0.0;
+
+    await protocol.StopAsync();
+    var ok = running && readBack && writeOnlySilent && strainRuns;
+    return (ok, $"running={running}; polls before write={polledBefore}, after={polledAfter}; value kept and stamped={readBack}; " +
+                $"write-only silent={writeOnlySilent}; signal still generated={strainRuns}");
+}
+
+// T9: the simulation driver implements IProtocolVariableCommandDriver like the CAN/serial/TCP
+// drivers, so the module can wire read-requested and value-changed notifications to it; a Read
+// from a control (RequestReadAsync on the protocol variable) then reaches the protocol.
+async Task<(bool, string)> Test9_DriverCommands()
+{
+    var protocol = NewProtocol();
+    var driver = new SimDriver { IsEnabled = true };
+    driver.Protocols.Add(protocol);
+    var onRequest = new OnRequestVarEvent { Name = "onRequest" };
+    var events = new IVarEvent[] { Event("e50", 50), onRequest };
+    var hold = DoubleVariable(1, "Hold");
+    var stress = DoubleVariable(2, "Stress");
+    var periodic = DoubleVariable(3, "Strain");
+    Add(protocol, hold, events, "direction=\"readWrite\";eventRef=\"onRequest\";id=\"Hold\";signal=\"hold\"");
+    Add(protocol, stress, events, "direction=\"read\";eventRef=\"onRequest\";id=\"Stress\";signal=\"laosstress\"");
+    Add(protocol, periodic, events, "direction=\"read\";eventRef=\"e50\";id=\"Strain\";signal=\"laosstrain\"");
+    var pvHold = protocol.Variables[0];
+    var pvStress = protocol.Variables[1];
+    var pvPeriodic = protocol.Variables[2];
+    var commandDriver = (IProtocolVariableCommandDriver)driver;
+
+    var canOk = commandDriver.CanRequestRead(pvHold) && commandDriver.CanRequestRead(pvStress)
+                && !commandDriver.CanRequestRead(pvPeriodic)
+                && commandDriver.CanSendCommand(pvHold) && !commandDriver.CanSendCommand(pvStress);
+
+    // Wire like ModuleBase does for a command driver.
+    pvHold.SubscribeAsyncReadRequested((pv, ct) => commandDriver.OnProtocolVariableReadRequestAsync(pv, ct));
+    pvStress.SubscribeAsyncReadRequested((pv, ct) => commandDriver.OnProtocolVariableReadRequestAsync(pv, ct));
+
+    var noHandlerThrows = false;
+    try { await pvPeriodic.RequestReadAsync(); } catch (InvalidOperationException) { noHandlerThrows = true; }
+
+    var holdNotified = 0;
+    var stressNotified = 0;
+    pvHold.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref holdNotified); return Task.CompletedTask; });
+    pvStress.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref stressNotified); return Task.CompletedTask; });
+
+    await driver.StartAsync();
+    await Task.Delay(300); // the generator loop starts on a worker task and sets Running there
+    var running = driver.State == CommunicationState.Running && protocol.State == CommunicationState.Running;
+
+    hold.TrySetEngValue(1.0);
+    await pvHold.RequestReadAsync();
+    await pvStress.RequestReadAsync();
+    var readThroughDriver = holdNotified == 1 && stressNotified == 1 && Math.Abs(hold.GetEngValue() - 1.0) < 1e-9;
+
+    await driver.StopAsync();
+    var stoppedThrows = false;
+    try { await pvHold.RequestReadAsync(); } catch (InvalidOperationException) { stoppedThrows = true; }
+
+    var ok = canOk && noHandlerThrows && running && readThroughDriver && stoppedThrows;
+    return (ok, $"can={canOk}; no handler throws={noHandlerThrows}; running={running}; read through driver={readThroughDriver} " +
+                $"(hold={holdNotified}, stress={stressNotified}); throws after stop={stoppedThrows}");
+}
+
+// T8: a scalar signal and the thermal matrix bound to an On Request event are never generated
+// periodically; CanReadVariable reports them (and not the periodic one); ReadVariableAsync
+// produces exactly one sample/table per call; a read while stopped throws.
+async Task<(bool, string)> Test8_OnRequestRead()
+{
+    var protocol = NewProtocol();
+    var onRequest = new OnRequestVarEvent { Name = "onRequest" };
+    var events = new IVarEvent[] { Event("e50", 50), onRequest };
+    var stress = DoubleVariable(1, "Stress");
+    var strain = DoubleVariable(2, "Strain");
+    var matrix = ThermalMatrix(3);
+    Add(protocol, stress, events, "direction=\"read\";eventRef=\"onRequest\";id=\"Stress\";signal=\"laosstress\"");
+    Add(protocol, strain, events, "direction=\"read\";eventRef=\"e50\";id=\"Strain\";signal=\"laosstrain\"");
+    Add(protocol, matrix, events, "direction=\"readWrite\";eventRef=\"onRequest\";id=\"ThermalField\";signal=\"thermal\"");
+    // Parameter (no generator) as readWrite on the On Request event: readable back like a device
+    // parameter; a write-only scalar is never readable (same rule as Modbus master / XCP).
+    var hold = DoubleVariable(4, "Hold");
+    var writeOnly = DoubleVariable(5, "WriteOnly");
+    Add(protocol, hold, events, "direction=\"readWrite\";eventRef=\"onRequest\";id=\"Hold\";signal=\"hold\"");
+    Add(protocol, writeOnly, events, "direction=\"write\";eventRef=\"onRequest\";id=\"WriteOnly\";signal=\"nonlin\"");
+    var pvStress = protocol.Variables[0];
+    var pvStrain = protocol.Variables[1];
+    var pvMatrix = protocol.Variables[2];
+    var pvHold = protocol.Variables[3];
+    var pvWriteOnly = protocol.Variables[4];
+    var reader = (IProtocolVariableReadProtocol)protocol;
+
+    var canReadOk = reader.CanReadVariable(pvStress) && reader.CanReadVariable(pvMatrix) && !reader.CanReadVariable(pvStrain)
+                    && reader.CanReadVariable(pvHold) && !reader.CanReadVariable(pvWriteOnly);
+
+    var stoppedThrows = false;
+    try { await reader.ReadVariableAsync(pvStress); } catch (InvalidOperationException) { stoppedThrows = true; }
+
+    var stressNotified = 0;
+    var matrixNotified = 0;
+    pvStress.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref stressNotified); return Task.CompletedTask; });
+    pvMatrix.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref matrixNotified); return Task.CompletedTask; });
+
+    await protocol.StartAsync();
+    var g = await SampleRange(strain, 300); // the generator loop starts on a worker task
+    var running = protocol.State == CommunicationState.Running;
+    var periodicRuns = g.max > 0 || g.min < 0;
+    var notGenerated = stressNotified == 0 && matrixNotified == 0 && DataSnapshot(matrix).All(v => v == 0);
+
+    await reader.ReadVariableAsync(pvStress);
+    await reader.ReadVariableAsync(pvMatrix);
+    var oneEach = stressNotified == 1 && matrixNotified == 1;
+
+    // Reading the parameter back: the written value is re-announced unchanged with a fresh stamp.
+    var holdNotified = 0;
+    pvHold.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref holdNotified); return Task.CompletedTask; });
+    hold.TrySetEngValue(1.0);
+    hold.Timestamp = DateTime.UtcNow.AddMinutes(-1);
+    await reader.ReadVariableAsync(pvHold);
+    var holdReadBack = holdNotified == 1 && Math.Abs(hold.GetEngValue() - 1.0) < 1e-9
+                       && hold.Timestamp > DateTime.UtcNow.AddSeconds(-5);
+    var writeOnlyThrows = false;
+    try { await reader.ReadVariableAsync(pvWriteOnly); } catch (InvalidOperationException) { writeOnlyThrows = true; }
+    var stampOk = stress.Timestamp > DateTime.UtcNow.AddSeconds(-5) && matrix.Timestamp > DateTime.UtcNow.AddSeconds(-5);
+    var snap = DataSnapshot(matrix);
+    var matrixFilled = snap.All(t => t >= 24.0 && t <= 66.0) && snap.Max() > 30.0
+                       && Math.Abs(matrix.GetEngValue(MatrixSectionKind.XAxis, 7) - 70) < 1e-9;
+
+    await Task.Delay(200);
+    var stillOne = stressNotified == 1 && matrixNotified == 1;
+
+    await protocol.StopAsync();
+    var stoppedThrowsAgain = false;
+    try { await reader.ReadVariableAsync(pvMatrix); } catch (InvalidOperationException) { stoppedThrowsAgain = true; }
+
+    var ok = canReadOk && stoppedThrows && running && periodicRuns && notGenerated && oneEach && stampOk && matrixFilled
+             && holdReadBack && writeOnlyThrows && stillOne && stoppedThrowsAgain;
+    var detail = $"canRead={canReadOk}; throws before start={stoppedThrows}; running={running}; periodic runs={periodicRuns}; " +
+                 $"not generated={notGenerated}; one each={oneEach}; stamp={stampOk}; matrix filled={matrixFilled} " +
+                 $"({snap.Min():F1}..{snap.Max():F1}); hold read back={holdReadBack}; write-only throws={writeOnlyThrows}; " +
+                 $"still one={stillOne}; throws after stop={stoppedThrowsAgain}";
+    return (ok, detail);
 }
 
 async Task<(bool, string)> Test5_ParametersUntouched()

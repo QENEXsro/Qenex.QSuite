@@ -20,6 +20,7 @@ public abstract class ModuleBase : IModuleBase
     private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, Task> Handler)> onValueChangedScriptSubscriptions = [];
     private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, Task> Handler)> protocolVariableSinkSubscriptions = [];
     private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, Task> Handler)> protocolVariableCommandSubscriptions = [];
+    private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, CancellationToken, Task> Handler)> protocolVariableReadRequestSubscriptions = [];
     private readonly List<(IProtocolVariable ProtocolVariable, Func<IProtocolVariable, Task> Handler)> replaySampleTimeSubscriptions = [];
 
     // UTC ticks of the last replayed sample; 0 outside replay or before the first sample.
@@ -549,6 +550,29 @@ public abstract class ModuleBase : IModuleBase
                 protocolVariable.SubscribeAsyncValueChanged(handler);
                 protocolVariableCommandSubscriptions.Add((protocolVariable, handler));
             }
+
+            // On-request reads (variables bound to an On Request event): the read-requested
+            // notification goes the same way — driver → owning protocol. Exceptions are NOT
+            // swallowed here: the requesting control reports a failed read (the protocol has
+            // already logged the reason).
+            var readRequestVariables = driver
+                .Protocols
+                .SelectMany(protocol => protocol.Variables)
+                .Where(protocolVariable => protocolVariable.IsCommunicated)
+                .Where(commandDriver.CanRequestRead)
+                .ToList();
+
+            foreach (var protocolVariable in readRequestVariables)
+            {
+                Func<IProtocolVariable, CancellationToken, Task> handler = (requestedProtocolVariable, requestCt) =>
+                {
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, requestCt);
+                    return commandDriver.OnProtocolVariableReadRequestAsync(requestedProtocolVariable, linkedCts.Token);
+                };
+
+                protocolVariable.SubscribeAsyncReadRequested(handler);
+                protocolVariableReadRequestSubscriptions.Add((protocolVariable, handler));
+            }
         }
     }
 
@@ -560,6 +584,13 @@ public abstract class ModuleBase : IModuleBase
         }
 
         protocolVariableCommandSubscriptions.Clear();
+
+        foreach (var subscription in protocolVariableReadRequestSubscriptions)
+        {
+            subscription.ProtocolVariable.UnsubscribeAsyncReadRequested(subscription.Handler);
+        }
+
+        protocolVariableReadRequestSubscriptions.Clear();
     }
     
 }

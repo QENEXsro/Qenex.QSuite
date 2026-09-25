@@ -17,15 +17,20 @@ namespace Qenex.QSuite.Protocols.SimulDataProtocol;
 /// protocols; the hosting SimDataDriver only starts and stops the protocol. A scalar with
 /// direction="write" is a live parameter, not a generated signal: "nonlin" drives the harmonic
 /// amplitudes of "laosstress", "h1amp".."h4amp"/"h1freq".."h4freq"/"h1phase".."h4phase" tune single harmonics and
-/// "hold" freezes the matrix generators while the simulation runs. A MatrixVariable with the
+/// "hold" freezes the matrix generators while the simulation runs. A parameter (or any scalar
+/// without a generator) with direction="readWrite" is also read back like a device parameter:
+/// its current value is re-announced in the period of its event (or on request) with a fresh
+/// timestamp, exactly as the Modbus master / XCP poll a readWrite variable. A MatrixVariable with the
 /// "thermal" signal is generated as a whole table (axes + data) and, with direction="readWrite",
 /// its cells can be edited from the Matrix control (the edit lands in the raw buffer directly).
 /// </summary>
-public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtocol
+public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtocol, IProtocolVariableReadProtocol
 {
     private const int SchedulerIdleMs = 50;
 
     private volatile bool exitRequested;
+    private Stopwatch? generatorClock;
+    private Dictionary<IProtocolVariable, PollEntry>? onRequestEntries;
     private CancellationTokenSource? runCts;
     private Task? runTask;
 
@@ -213,17 +218,24 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
         try
         {
             await ApplyParameterInitialValuesAsync();
+            var clock = Stopwatch.StartNew();
+            generatorClock = clock;
             var entries = BuildPollEntries();
-            SetState(CommunicationState.Running, $"Simulation: generating {entries.Count} signal(s).");
+            var onRequestCount = onRequestEntries?.Count ?? 0;
+            SetState(CommunicationState.Running,
+                $"Simulation: generating {entries.Count} signal(s)" +
+                (onRequestCount > 0 ? $", {onRequestCount} on request." : "."));
 
             if (entries.Count == 0)
             {
-                Logger?.Log(LogLevel.Warn, "Simulation: no variables with a periodic event; nothing to generate.");
+                if (onRequestCount == 0)
+                {
+                    Logger?.Log(LogLevel.Warn, "Simulation: no variables with a periodic event; nothing to generate.");
+                }
+
                 await Task.Delay(Timeout.Infinite, ct);
                 return;
             }
-
-            var clock = Stopwatch.StartNew();
             while (!ct.IsCancellationRequested && !exitRequested)
             {
                 var now = Environment.TickCount64;
@@ -276,6 +288,8 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
     private List<PollEntry> BuildPollEntries()
     {
         var entries = new List<PollEntry>();
+        var onRequest = new Dictionary<IProtocolVariable, PollEntry>();
+        onRequestEntries = onRequest;
         var now = Environment.TickCount64;
         var parameterProvider = BuildParameterProvider();
 
@@ -291,31 +305,38 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
             // Parameter variables (nonlin, hold, h{n}amp/h{n}freq/h{n}phase — or any scalar with a
             // write/readwrite direction) are written by the user from controls and read by the
             // generators — never generated over, whatever direction the configurator saved.
+            // With direction read/readWrite they are still polled like on a real device: the
+            // current value is read back (re-announced) in the period of the event, so every
+            // control shows a written value the same way as with the Modbus master / XCP.
             var isMatrix = simulVariable.Variable is MatrixVariable;
-            if (SimulSignalCatalog.IsParameterKey(spec.Signal) || (!isMatrix && spec.Direction != CommDirection.Read))
+            var isReadBack = !isMatrix && (SimulSignalCatalog.IsParameterKey(spec.Signal) || spec.Direction != CommDirection.Read);
+
+            // Write-only = user data only, never read (same as the Modbus master / XCP).
+            if (spec.Direction == CommDirection.Write)
             {
                 continue;
             }
 
-            // A matrix is generated when readable (read/readWrite); write-only means user data only.
-            if (isMatrix && spec.Direction == CommDirection.Write)
+            // On Request event: one sample per explicit read request (IProtocolVariableReadProtocol),
+            // never generated periodically.
+            var isOnRequest = spec.VariableEvent is OnRequestVarEvent;
+            long intervalMs = 0;
+            if (!isOnRequest)
             {
-                continue;
-            }
+                if (spec.VariableEvent is not PeriodicVarEvent periodicEvent)
+                {
+                    Logger?.Log(LogLevel.Warn,
+                        $"Simulation: variable '{simulVariable.Variable.Name}' has no periodic event ('{spec.VariableEvent?.Name}'); not polled.");
+                    continue;
+                }
 
-            if (spec.VariableEvent is not PeriodicVarEvent periodicEvent)
-            {
-                Logger?.Log(LogLevel.Warn,
-                    $"Simulation: variable '{simulVariable.Variable.Name}' has no periodic event ('{spec.VariableEvent?.Name}'); not generated.");
-                continue;
-            }
-
-            var intervalMs = (long)periodicEvent.Period * (int)periodicEvent.Unit;
-            if (intervalMs <= 0)
-            {
-                Logger?.Log(LogLevel.Warn,
-                    $"Simulation: variable '{simulVariable.Variable.Name}' has a non-positive period; not generated.");
-                continue;
+                intervalMs = (long)periodicEvent.Period * (int)periodicEvent.Unit;
+                if (intervalMs <= 0)
+                {
+                    Logger?.Log(LogLevel.Warn,
+                        $"Simulation: variable '{simulVariable.Variable.Name}' has a non-positive period; not polled.");
+                    continue;
+                }
             }
 
             var settings = new SimulSignalSettings(spec.Amp, spec.Freq, spec.Nonlin, parameterProvider);
@@ -331,15 +352,26 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                         continue;
                     }
 
-                    var signal = SimulSignalCatalog.Create(ResolveSignalKey(spec, scalarVariable), settings);
-                    entries.Add(new PollEntry
+                    // Read-back entry: nothing to generate, the poll only re-announces the value
+                    // the variable holds (a parameter or a readWrite scalar written from a control).
+                    var signal = isReadBack ? null : SimulSignalCatalog.Create(ResolveSignalKey(spec, scalarVariable), settings);
+                    var scalarEntry = new PollEntry
                     {
                         ProtocolVariable = simulVariable,
                         Variable = scalarVariable,
-                        Generate = t => SetSampleValue(scalarVariable, signal.Next(t)),
+                        Generate = signal == null ? _ => { } : t => SetSampleValue(scalarVariable, signal.Next(t)),
                         IntervalMs = intervalMs,
                         NextDueMs = now
-                    });
+                    };
+                    if (isOnRequest)
+                    {
+                        onRequest[simulVariable] = scalarEntry;
+                    }
+                    else
+                    {
+                        entries.Add(scalarEntry);
+                    }
+
                     break;
                 }
 
@@ -362,7 +394,7 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                     }
 
                     var matrixSignal = SimulSignalCatalog.CreateMatrix(spec.Signal, settings);
-                    entries.Add(new PollEntry
+                    var matrixEntry = new PollEntry
                     {
                         ProtocolVariable = simulVariable,
                         Variable = matrixVariable,
@@ -370,7 +402,16 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
                         IsHeld = () => (parameterProvider?.Invoke(SimulSignalCatalog.HoldParamKey) ?? 0.0) != 0.0,
                         IntervalMs = intervalMs,
                         NextDueMs = now
-                    });
+                    };
+                    if (isOnRequest)
+                    {
+                        onRequest[simulVariable] = matrixEntry;
+                    }
+                    else
+                    {
+                        entries.Add(matrixEntry);
+                    }
+
                     break;
                 }
 
@@ -563,6 +604,80 @@ public class SimulDataProtocol : ProtocolBase<int>, IProtocolVariableWriteProtoc
         }
 
         return Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region IProtocolVariableReadProtocol (On Request event)
+
+    /// <summary>
+    /// Readable on request = a variable bound to an On Request event with direction read or
+    /// readWrite — the same rule as the Modbus master and XCP, so the Read action of the controls
+    /// does not depend on the protocol behind the variable. A generated signal or matrix is
+    /// generated once per read; a parameter or a readWrite scalar (no generator, the value lives
+    /// in the variable like in a device's memory) reads back its current value. Decided from the
+    /// configuration alone so the host can enable the Read action before the protocol runs.
+    /// </summary>
+    public bool CanReadVariable(IProtocolVariable protocolVariable)
+    {
+        if (!Variables.Contains(protocolVariable)
+            || !protocolVariable.IsCommunicated
+            || protocolVariable is not SimulDataProtocolVariable simulVariable
+            || simulVariable.ProtocolVariableSpecification is not SimulDataProtocolVariableSpecification
+            {
+                VariableEvent: OnRequestVarEvent,
+                Direction: CommDirection.Read or CommDirection.ReadWrite
+            } spec)
+        {
+            return false;
+        }
+
+        return simulVariable.Variable switch
+        {
+            ScalarVariable scalar => SupportsValues(scalar),
+            MatrixVariable matrix => SimulSignalCatalog.IsMatrixKey(spec.Signal) && matrix.ValidateLayout() == null,
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// The on-request counterpart of a poll cycle: generates one sample (scalar signal) or one
+    /// table (matrix) for the current generator time and notifies the variable. A variable
+    /// without a generator (parameter such as "hold", readWrite scalar) has nothing to generate —
+    /// its current value is re-announced with a fresh timestamp, exactly like reading a parameter
+    /// back from a device (its poll entry is a read-back entry; the fallback below covers a
+    /// variable that got no entry at all).
+    /// </summary>
+    public async Task ReadVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        if (!CanReadVariable(protocolVariable))
+        {
+            throw new InvalidOperationException(
+                $"Simulation: variable '{protocolVariable.Variable?.Name}' is not readable on request.");
+        }
+
+        var entries = onRequestEntries;
+        if (State != CommunicationState.Running || entries == null)
+        {
+            var message = $"Read of '{protocolVariable.Variable?.Name}' skipped — simulation not running.";
+            Logger?.Log(LogLevel.Warn, $"Simulation: {message}");
+            throw new InvalidOperationException(message);
+        }
+
+        ct.ThrowIfCancellationRequested();
+        if (entries.TryGetValue(protocolVariable, out var entry))
+        {
+            entry.Generate(generatorClock?.Elapsed.TotalSeconds ?? 0.0);
+            entry.Variable.Timestamp = DateTime.UtcNow;
+            await entry.ProtocolVariable.NotifyValueChangedAsync();
+            Logger?.Log(LogLevel.Debug, $"Simulation: read '{entry.Variable.Name}' on request.");
+            return;
+        }
+
+        var variable = protocolVariable.Variable!;
+        variable.Timestamp = DateTime.UtcNow;
+        await protocolVariable.NotifyValueChangedAsync();
+        Logger?.Log(LogLevel.Debug, $"Simulation: read back the current value of '{variable.Name}' on request.");
     }
 
     #endregion

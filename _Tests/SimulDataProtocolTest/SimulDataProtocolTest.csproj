@@ -12,6 +12,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\Protocols\SimulDataProtocol\SimulDataProtocol.csproj" />
+        <ProjectReference Include="..\..\Drivers\SimDataDriver\SimDataDriver.csproj" />
         <ProjectReference Include="..\..\Variables\ValuePresentation\ValuePresentation.csproj" />
         <ProjectReference Include="..\..\Variables\ValueConversion\ValueConversion.csproj" />
         <ProjectReference Include="..\..\Modules\ModuleXmlHandler\ModuleXmlHandler.csproj" />

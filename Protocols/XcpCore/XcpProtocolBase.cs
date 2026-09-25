@@ -22,7 +22,8 @@ namespace Qenex.QSuite.Protocols.XcpCore;
 /// extraction of received packets (its <see cref="ProtocolBase{T}.AddReceivedDataToQueueAsync"/>
 /// feeds <see cref="Master"/>.<see cref="XcpMaster.OnPacketReceived"/>).
 /// </summary>
-public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransportProtocol<TFrame>, IProtocolVariableWriteProtocol
+public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransportProtocol<TFrame>, IProtocolVariableWriteProtocol,
+    IProtocolVariableReadProtocol
 {
     private const int ReconnectDelayMs = 2000;
     private const int MaxConsecutiveBusFailures = 5;
@@ -559,6 +560,13 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
                 continue;
             }
 
+            if (spec.IsOnRequestEvent)
+            {
+                // Read only on request (IProtocolVariableReadProtocol) — never polled.
+                Logger?.Log(LogLevel.Debug, $"XCP: variable '{xcpVariable.Variable.Name}' is read on request; not polled.");
+                continue;
+            }
+
             if (xcpVariable.Variable is not ScalarVariable scalarVariable)
             {
                 Logger?.Log(LogLevel.Warn, $"XCP: variable '{xcpVariable.Variable.Name}' is not scalar; not polled.");
@@ -962,6 +970,7 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
                 xcpVariable.ProtocolVariableSpecification is not XcpVariableSpecification spec ||
                 spec.DaqEventChannel is not { } channel ||
                 spec.IsStimEvent ||
+                spec.IsOnRequestEvent ||
                 spec.Direction == CommDirection.Write)
             {
                 continue;
@@ -1468,6 +1477,68 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
         {
             Logger?.Log(LogLevel.Warn, $"XCP: write of '{scalarVariable.Name}' failed: {e.Message}");
             SetState(CommunicationState.Running, $"Write of '{scalarVariable.Name}' failed: {e.Message}");
+        }
+    }
+
+    #endregion
+
+    #region On-request reads (IProtocolVariableReadProtocol)
+
+    /// <summary>Readable on request = a read/readWrite scalar bound to an On Request event.
+    /// (Matrix variables over XCP are not supported yet — a separate task.)</summary>
+    public bool CanReadVariable(IProtocolVariable protocolVariable)
+    {
+        return Variables.Contains(protocolVariable) &&
+               protocolVariable.IsCommunicated &&
+               protocolVariable is XcpProtocolVariable { Variable: ScalarVariable } &&
+               protocolVariable.ProtocolVariableSpecification is XcpVariableSpecification
+               {
+                   Direction: CommDirection.Read or CommDirection.ReadWrite,
+                   IsOnRequestEvent: true
+               };
+    }
+
+    /// <summary>
+    /// One SHORT_UPLOAD (or chained UPLOAD) of the variable, exactly what a poll cycle does — the
+    /// master's request lock serialises it with the running polling/DAQ session. The value lands
+    /// in the variable through the same path as a polled value (timestamp + notification with the
+    /// bus-update flag, so it does not echo back as a DOWNLOAD). Failures are logged and rethrown.
+    /// </summary>
+    public async Task ReadVariableAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        if (!CanReadVariable(protocolVariable) ||
+            protocolVariable is not XcpProtocolVariable xcpVariable ||
+            xcpVariable.Variable is not ScalarVariable scalarVariable ||
+            xcpVariable.ProtocolVariableSpecification is not XcpVariableSpecification spec)
+        {
+            throw new InvalidOperationException(
+                $"XCP: variable '{protocolVariable.Variable?.Name}' is not readable on request.");
+        }
+
+        var session = master;
+        if (session is not { IsConnected: true })
+        {
+            var message = $"Read of '{scalarVariable.Name}' skipped — not connected.";
+            Logger?.Log(LogLevel.Warn, $"XCP: {message}");
+            throw new XcpProtocolException(message);
+        }
+
+        try
+        {
+            var bytes = await session.ReadMemoryAsync(spec.AddressExtension, spec.Address, spec.Size, ct);
+            var value = session.Codec.DecodeValue(bytes, spec.DataType);
+            await ApplyBusValueAsync(xcpVariable, scalarVariable, value, DateTime.UtcNow);
+            Logger?.Log(LogLevel.Debug, $"XCP: read '{scalarVariable.Name}' on request ({bytes.Length} B at 0x{spec.Address:X}).");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception e) when (e is XcpErrorException or XcpTimeoutException or XcpProtocolException)
+        {
+            Logger?.Log(LogLevel.Warn, $"XCP: read of '{scalarVariable.Name}' failed: {e.Message}");
+            SetState(CommunicationState.Running, $"Read of '{scalarVariable.Name}' failed: {e.Message}");
+            throw;
         }
     }
 

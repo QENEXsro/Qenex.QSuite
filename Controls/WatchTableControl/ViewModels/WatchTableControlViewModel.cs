@@ -18,7 +18,7 @@ using Microsoft.Win32;
 namespace Qenex.QSuite.Controls.WatchTableControl.ViewModels;
 
 [DataContract]
-public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
+public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IVariableReadControl
 {
 	public WatchTableControlViewModel()
 	{
@@ -58,6 +58,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 	private bool? isUnitColumnVisible;
 	private bool? isTimeColumnVisible;
 	private bool? isWriteColumnVisible;
+	private bool? isReadColumnVisible;
 
 	[IgnoreDataMember]
 	public bool IsNameColumnVisible
@@ -92,6 +93,13 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 	{
 		get => isWriteColumnVisible ?? true;
 		set { isWriteColumnVisible = value; OnPropertyChanged(); }
+	}
+
+	[IgnoreDataMember]
+	public bool IsReadColumnVisible
+	{
+		get => isReadColumnVisible ?? true;
+		set { isReadColumnVisible = value; OnPropertyChanged(); }
 	}
 
 	[DataMember]
@@ -141,12 +149,40 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 		set;
 	}
 
+	/// <summary>Table-wide option (same as in the Matrix and Single-Signal controls): Enter writes
+	/// the edited value immediately; unticked, the edit stays pending and the row's Write button
+	/// sends it. Pushed into every row.</summary>
+	[DataMember]
+	public bool WriteOnEnter
+	{
+		get;
+		set
+		{
+			field = value;
+			OnPropertyChanged();
+			foreach (var row in Rows)
+			{
+				row.WriteOnEnter = value;
+			}
+		}
+	}
+
+	/// <summary>"Write on Enter" menu item enablement: some row is in write mode.</summary>
+	[IgnoreDataMember]
+	public bool HasWriteActiveRows
+	{
+		get;
+		private set { field = value; OnPropertyChanged(); }
+	}
+
 	public void RefreshWriteCapability()
 	{
 		foreach (var row in Rows)
 		{
 			RefreshRowWriteCapability(row);
 		}
+
+		RefreshHasWriteActiveRows();
 	}
 
 	private void RefreshRowWriteCapability(WatchRow row)
@@ -155,6 +191,11 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 		// (string variables stay read-only in the table).
 		var variable = FindVariable(row.Reference);
 		row.CanWrite = variable is ScalarVariable && (CanWriteVariableProvider?.Invoke(variable) ?? false);
+	}
+
+	private void RefreshHasWriteActiveRows()
+	{
+		HasWriteActiveRows = Rows.Any(row => row.IsWriteActive);
 	}
 
 	private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -176,16 +217,39 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 		else
 		{
 			WriteModeReferences.Remove(row.Reference);
+
+			// Leaving write mode discards the pending edit. The row keeps the last value read
+			// from the device (it was frozen meanwhile): a written value is shown only once the
+			// device returns it - next poll, or next Read for an On Request variable.
+			row.IsDirty = false;
 			row.IsWriteError = false;
+		}
+
+		RefreshHasWriteActiveRows();
+	}
+
+	private void RefreshRowFromVariable(WatchRow row)
+	{
+		var variable = FindVariable(row.Reference);
+		var text = variable switch
+		{
+			ScalarVariable scalar => scalar.GetPresentationText(),
+			StringVariable str => str.Values,
+			_ => null
+		};
+		if (text != null)
+		{
+			row.Value = text;
+			row.Time = variable!.Timestamp;
 		}
 	}
 
+	/// <summary>Sets the row's edit box to the variable's current value without marking it dirty.</summary>
 	private void PrefillEditValue(WatchRow row)
 	{
-		row.EditValue = FindVariable(row.Reference) is ScalarVariable scalar
+		row.SetEditValueSilently(FindVariable(row.Reference) is ScalarVariable scalar
 			? scalar.GetEngValue().ToString(CultureInfo.InvariantCulture)
-			: string.Empty;
-		row.IsWriteError = false;
+			: string.Empty);
 	}
 
 	private async Task WriteRowAsync(WatchRow row)
@@ -205,14 +269,20 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 			return;
 		}
 
+		bool written;
 		try
 		{
-			var written = await WriteVariableEngValueAsync(variable, engValue);
-			row.IsWriteError = !written;
+			written = await WriteVariableEngValueAsync(variable, engValue);
 		}
 		catch
 		{
-			row.IsWriteError = true;
+			written = false;
+		}
+
+		row.IsWriteError = !written;
+		if (written)
+		{
+			row.IsDirty = false;
 		}
 	}
 
@@ -225,6 +295,72 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 	private IVariableBase? FindVariable(string reference)
 	{
 		return Variables.FirstOrDefault(v => GetVariableReference(v) == reference);
+	}
+
+	#endregion
+
+	#region Read on request (IVariableReadControl, per row)
+
+	[IgnoreDataMember]
+	public Func<IVariableBase, bool>? CanReadVariableProvider { get; set; }
+
+	[IgnoreDataMember]
+	public Func<IVariableBase, Task<bool>>? ReadVariableAsync { get; set; }
+
+	public void RefreshReadCapability()
+	{
+		foreach (var row in Rows)
+		{
+			RefreshRowReadCapability(row);
+		}
+	}
+
+	private void RefreshRowReadCapability(WatchRow row)
+	{
+		// Only a variable bound to an On Request event is readable on request (the protocol
+		// decides through the host provider); periodically polled rows have no Read button.
+		var variable = FindVariable(row.Reference);
+		row.CanRead = variable != null && (CanReadVariableProvider?.Invoke(variable) ?? false);
+	}
+
+	private async Task ReadRowAsync(WatchRow row)
+	{
+		// Reads go to the device only in the Run mode (outside Run the command drivers are not
+		// subscribed, so there is nobody to serve the request).
+		var variable = FindVariable(row.Reference);
+		if (!row.CanReadNow || !IsRun || ReadVariableAsync == null || variable == null)
+		{
+			row.IsReadError = true;
+			return;
+		}
+
+		row.IsReadBusy = true;
+		try
+		{
+			// The value arrives through UpdateVariableValueAsync during the read; reset the
+			// row throttle so it is shown even when the last refresh was a moment ago.
+			row.LastUpdate = DateTime.MinValue;
+			var read = await ReadVariableAsync(variable);
+			row.IsReadError = !read;
+			if (read && row.IsWriteActive)
+			{
+				// An explicit Read means the user wants the fresh value even in write mode (the
+				// row display is frozen there): show it and discard the pending edit.
+				_ = Application.Current.Dispatcher.BeginInvoke(() =>
+				{
+					RefreshRowFromVariable(row);
+					PrefillEditValue(row);
+				});
+			}
+		}
+		catch
+		{
+			row.IsReadError = true;
+		}
+		finally
+		{
+			row.IsReadBusy = false;
+		}
 	}
 
 	#endregion
@@ -271,13 +407,17 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 			Unit = protVariable is ScalarVariable scalar ? scalar.Values.ValPresentation.Unit : string.Empty,
 			// Restore the persisted per-row write mode before the change handler is attached.
 			IsWriteMode = WriteModeReferences.Contains(reference),
-			WriteRequested = r => _ = WriteRowAsync(r)
+			WriteOnEnter = WriteOnEnter,
+			WriteRequested = r => _ = WriteRowAsync(r),
+			ReadRequested = r => _ = ReadRowAsync(r)
 		};
 		row.PropertyChanged += OnRowPropertyChanged;
 		Rows.Add(row);
 
-		// Writability must be re-evaluated on every (re)bind.
+		// Writability and on-request readability must be re-evaluated on every (re)bind.
 		RefreshRowWriteCapability(row);
+		RefreshRowReadCapability(row);
+		RefreshHasWriteActiveRows();
 		if (row.IsWriteActive)
 		{
 			PrefillEditValue(row);
@@ -295,6 +435,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 
 		row.Name = variable.Label;
 		row.Unit = variable is ScalarVariable scalar ? scalar.Values.ValPresentation.Unit : string.Empty;
+		RefreshRowReadCapability(row);
 	}
 
 	public override async Task UpdateVariableValueAsync(IVariableBase protVariable)
@@ -326,6 +467,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 		{
 			row.Value = raw;
 			row.Time = timestamp;
+			row.IsReadError = false;
 		});
 	}
 
@@ -337,6 +479,7 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl
 		row.PropertyChanged -= OnRowPropertyChanged;
 		WriteModeReferences.Remove(row.Reference);
 		Rows.Remove(row);
+		RefreshHasWriteActiveRows();
 		LinkedVariables.RemoveAll(reference => reference == row.Reference);
 		var variable = Variables.FirstOrDefault(v => GetVariableReference(v) == row.Reference);
 		if (variable != null)

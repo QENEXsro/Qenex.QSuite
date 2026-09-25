@@ -351,6 +351,33 @@ public class TcpClientDriver : DriverBase, IProtocolVariableCommandDriver, ITran
         }
     }
 
+    // On-request reads: the module wires read-requested notifications to this driver; the driver
+    // delegates to the owning protocol (IProtocolVariableReadProtocol), which reads the variable
+    // once over this driver's transport. Failures propagate so the requesting control sees them.
+    public bool CanRequestRead(IProtocolVariable protocolVariable)
+    {
+        return Protocols
+            .OfType<IProtocolVariableReadProtocol>()
+            .Any(protocol => protocol.CanReadVariable(protocolVariable));
+    }
+
+    public async Task OnProtocolVariableReadRequestAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        foreach (var protocol in Protocols.OfType<IProtocolVariableReadProtocol>())
+        {
+            if (!protocol.CanReadVariable(protocolVariable))
+            {
+                continue;
+            }
+
+            await protocol.ReadVariableAsync(protocolVariable, ct);
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"No protocol of this driver can read variable '{protocolVariable.Variable?.Name}' on request.");
+    }
+
     #endregion
 
     #region Configuration helpers

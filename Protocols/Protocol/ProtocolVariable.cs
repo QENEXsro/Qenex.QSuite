@@ -69,6 +69,36 @@ public class ProtocolVariable : IProtocolVariable
         OnValueChangedAsync -= handler;
     }
 
+    /// <summary>
+    /// On-request read: the handlers (module → command driver → protocol) run one after another
+    /// and their exceptions are NOT swallowed — a failed device read must reach the requesting
+    /// control. No handler subscribed (variable not served by a read-capable protocol, or the
+    /// module is not running) is reported as an InvalidOperationException for the same reason.
+    /// </summary>
+    public async Task RequestReadAsync(CancellationToken ct = default)
+    {
+        var handlers = OnReadRequestedAsync?.GetInvocationList();
+        if (handlers == null || handlers.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"Variable '{Variable?.Name}' has no read handler — the protocol is not running or does not support on-request reads.");
+        }
+
+        foreach (Func<IProtocolVariable, CancellationToken, Task> handler in handlers)
+        {
+            await handler(this, ct);
+        }
+    }
+    public event Func<IProtocolVariable, CancellationToken, Task>? OnReadRequestedAsync;
+    public void SubscribeAsyncReadRequested(Func<IProtocolVariable, CancellationToken, Task> handler)
+    {
+        OnReadRequestedAsync += handler;
+    }
+    public void UnsubscribeAsyncReadRequested(Func<IProtocolVariable, CancellationToken, Task> handler)
+    {
+        OnReadRequestedAsync -= handler;
+    }
+
     private async Task NotifySubscriberAsync(Func<IProtocolVariable, Task> handler)
     {
         try

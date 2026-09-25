@@ -60,5 +60,44 @@
             </Setter.Value>
         </Setter>
     </Style>
-	
+	<!-- Header buttons of the controls (Read, Write next to the settings arrow): telerik:RadButton
+	     based on the theme style like every other button in the controls (text color = Windows11
+	     palette, switches with the theme), with its own 20 px template copied from the settings
+	     arrow (SquareExpanderStyle.HeaderButtonStyle above) so the theme template cannot change
+	     its height. Used by Single-Signal and Matrix. -->
+	<Style x:Key="HeaderButtonStyle" TargetType="telerik:RadButton" BasedOn="{StaticResource RadButtonStyle}">
+		<Setter Property="Height" Value="20"/>
+		<Setter Property="MinHeight" Value="0"/>
+		<Setter Property="MinWidth" Value="0"/>
+		<Setter Property="Padding" Value="6,0"/>
+		<Setter Property="Background" Value="Transparent"/>
+		<Setter Property="VerticalAlignment" Value="Top"/>
+		<Setter Property="Template">
+			<Setter.Value>
+				<ControlTemplate TargetType="telerik:RadButton">
+					<Border x:Name="ButtonBorder"
+					        Background="{TemplateBinding Background}"
+					        BorderBrush="#888"
+					        BorderThickness="1"
+					        CornerRadius="2"
+					        Padding="{TemplateBinding Padding}"
+					        SnapsToDevicePixels="True">
+						<ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+					</Border>
+					<ControlTemplate.Triggers>
+						<Trigger Property="IsMouseOver" Value="True">
+							<Setter TargetName="ButtonBorder" Property="Background" Value="#22888888"/>
+						</Trigger>
+						<Trigger Property="IsPressed" Value="True">
+							<Setter TargetName="ButtonBorder" Property="Background" Value="#44888888"/>
+						</Trigger>
+						<Trigger Property="IsEnabled" Value="False">
+							<Setter Property="Opacity" Value="0.4"/>
+						</Trigger>
+					</ControlTemplate.Triggers>
+				</ControlTemplate>
+			</Setter.Value>
+		</Setter>
+	</Style>
+
 </ResourceDictionary>

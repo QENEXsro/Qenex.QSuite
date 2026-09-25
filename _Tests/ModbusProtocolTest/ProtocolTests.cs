@@ -18,6 +18,7 @@ internal static class ProtocolTests
         Master_PollsHoldingFloat_Tcp().GetAwaiter().GetResult();
         Master_PollsCoil_Rtu().GetAwaiter().GetResult();
         Master_OperatorWrite_WithEchoSuppression().GetAwaiter().GetResult();
+        Master_OnRequestRead_ScalarAndMatrix_Tcp().GetAwaiter().GetResult();
         Master_InvalidSettings_Faults().GetAwaiter().GetResult();
         Slave_ServesAndWrites_Tcp().GetAwaiter().GetResult();
         Slave_IgnoresForeignUnit_Rtu().GetAwaiter().GetResult();
@@ -226,6 +227,90 @@ internal static class ProtocolTests
         Check(slave.Holding[10] == 0x42F6 && slave.Holding[11] == 0xE979,
             "operator write: FC16 delivered the float to the device registers");
         Check(master.CanWriteVariable(protocolVariable), "readWrite variable reports writable");
+    }
+
+    /// <summary>
+    /// On Request event: a scalar and a matrix bound to it are not polled while a periodic
+    /// variable is; CanReadVariable reports them (not the polled one); ReadVariableAsync performs
+    /// one read transaction each and lands the values; a read after stop throws.
+    /// </summary>
+    private static async Task Master_OnRequestRead_ScalarAndMatrix_Tcp()
+    {
+        var master = new ModbusMasterProtocol
+        {
+            IsEnabled = true,
+            RawSettings = "mode=\"tcp\";unitId=\"1\";requestTimeoutMs=\"100\";requestRetries=\"1\""
+        };
+        master.SetConfiguration();
+
+        var onRequestEvent = new OnRequestVarEvent { Name = "onRequest" };
+        IVarEvent[] events = [Poll20Ms, onRequestEvent];
+
+        var temperature = FloatVariable("Temperature");
+        var polled = UShortVariable("Alarm");
+        polled.Id = 2;
+        var map = new MatrixVariable
+        {
+            Id = 3,
+            Namespace = "/",
+            Name = "IgnitionMap",
+            Label = "Ignition map",
+            DefaultDataType = ValueDataType.UShort,
+            Endianness = MatrixEndianness.Big,
+            XAxis = new MatrixSection { Count = 2 },
+            YAxis = new MatrixSection { Count = 3 },
+            Data = new MatrixSection()
+        };
+
+        var temperatureVariable = master.CreateProtocolVariable(temperature, events,
+            "registerType=\"holding\";address=\"100\";direction=\"read\";eventRef=\"onRequest\"", true)!;
+        var polledVariable = master.CreateProtocolVariable(polled, events,
+            "registerType=\"holding\";address=\"200\";eventRef=\"poll20ms\"", true)!;
+        var mapVariable = master.CreateProtocolVariable(map, events,
+            "registerType=\"holding\";address=\"300\";direction=\"readWrite\";eventRef=\"onRequest\"", true)!;
+        master.AddVariable(temperatureVariable);
+        master.AddVariable(polledVariable);
+        master.AddVariable(mapVariable);
+
+        var slave = AttachSimulatedSlave(master, tcp: true);
+        slave.Holding[100] = 0x42F6; // 123.456f, big word order
+        slave.Holding[101] = 0xE979;
+        slave.Holding[200] = 7;
+        for (ushort i = 0; i < 11; i++) // 2 + 3 + 6 ushort cells = 22 B = 11 registers
+        {
+            slave.Holding[(ushort)(300 + i)] = (ushort)(1000 + i);
+        }
+
+        Check(master.CanReadVariable(temperatureVariable) && master.CanReadVariable(mapVariable),
+            "on request: scalar and matrix on the On Request event are readable on request");
+        Check(!master.CanReadVariable(polledVariable), "on request: periodically polled variable is NOT readable on request");
+
+        await master.StartAsync();
+        var polledLanded = await WaitUntilAsync(() => (ushort)polled.GetValue() == 7);
+        await Task.Delay(60); // several poll cycles
+        Check(polledLanded, "on request: periodic variable is polled");
+        Check((float)temperature.GetValue() == 0f && map.GetEngValue(MatrixSectionKind.Data, 0) == 0,
+            "on request: On Request variables are not polled");
+
+        var notified = 0;
+        temperatureVariable.SubscribeAsyncValueChanged(_ => { Interlocked.Increment(ref notified); return Task.CompletedTask; });
+
+        await master.ReadVariableAsync(temperatureVariable);
+        Check(Math.Abs((float)temperature.GetValue() - 123.456f) < 0.001f, "on request: scalar read landed the float");
+        Check(notified == 1, "on request: exactly one notification per scalar read");
+
+        await master.ReadVariableAsync(mapVariable);
+        Check(map.GetEngValue(MatrixSectionKind.XAxis, 1) == 1001 &&
+              map.GetEngValue(MatrixSectionKind.YAxis, 2) == 1004 &&
+              map.GetEngValue(MatrixSectionKind.Data, 5) == 1010,
+            "on request: matrix read landed the whole register block (axes + data)");
+
+        await Task.Delay(60);
+        Check(notified == 1, "on request: no further scalar update without a request");
+
+        await master.StopAsync();
+        await CheckThrowsAsync<ModbusProtocolException>(() => master.ReadVariableAsync(temperatureVariable),
+            "on request: read after stop throws ModbusProtocolException");
     }
 
     private static async Task Master_InvalidSettings_Faults()

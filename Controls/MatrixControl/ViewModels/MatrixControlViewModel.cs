@@ -11,14 +11,15 @@ namespace Qenex.QSuite.Controls.MatrixControl.ViewModels;
 
 /// <summary>
 /// Table view of a MatrixVariable (value block / curve / map): X axis breakpoints as the column
-/// header, Y axis breakpoints as the row header, data cells row-major. Write mode allows editing
-/// cells (data and axes): with Write on Enter ticked, Enter writes the cell immediately;
-/// otherwise edits accumulate as dirty cells until the Write button sends them. While write mode
-/// is active NO cell is refreshed from the bus. In read mode the table follows the variable
-/// (Auto read) or refreshes only on the Read button.
+/// header, Y axis breakpoints as the row header, data cells row-major. Read/write behaviour is
+/// the same as in the Single-Signal and Watch Table controls: the table shows only values read
+/// from the device (periodic event: every poll; On Request event: the Read button). Write mode
+/// freezes the display and makes the cells editable: with Write on Enter ticked, Enter writes the
+/// cell immediately; otherwise edits accumulate as dirty cells until the Write button sends them.
+/// A written value shows up only once the device returns it (next poll / next Read).
 /// </summary>
 [DataContract]
-public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
+public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, IVariableReadControl
 {
     private DateTime previousUpdateTime = DateTime.MinValue;
 
@@ -77,13 +78,25 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
         }
     } = 60;
 
-    /// <summary>Read mode: apply bus updates automatically; unticked, the table changes only on Read.</summary>
+    /// <summary>Write mode: Enter writes the edited cell immediately instead of leaving it pending
+    /// for the Write button (same option as in the Single-Signal and Watch Table controls).</summary>
     [DataMember]
-    public bool AutoRead { get; set { field = value; OnPropertyChanged(); } } = true;
+    public bool WriteOnEnter
+    {
+        get;
+        set
+        {
+            field = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsWriteButtonVisible));
+        }
+    }
 
-    /// <summary>Write mode: Enter writes the edited cell immediately instead of collecting dirty cells.</summary>
-    [DataMember]
-    public bool WriteOnEnter { get; set { field = value; OnPropertyChanged(); } }
+    // "Auto Read" (older .qproj files): a leftover of the time when Read meant "redraw from
+    // memory"; removed 2026-09-25 (decision of Radek) - the table always follows the device.
+    // Read from old projects and dropped, never serialized back.
+    [DataMember(Name = "AutoRead", EmitDefaultValue = false)]
+    private bool LegacyAutoRead { get => false; set { } }
 
     #endregion
 
@@ -107,16 +120,17 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
         {
             field = value;
             OnPropertyChanged();
-            OnPropertyChanged(nameof(IsWriteActive));
-            OnPropertyChanged(nameof(CanWriteDirty));
+            NotifyWriteStateChanged();
             if (value)
             {
                 PrefillEditTexts();
             }
             else
             {
-                // Leaving write mode discards pending edits and re-follows the variable.
-                RefreshFromVariable();
+                // Leaving write mode discards pending edits. The display keeps the last values
+                // read from the device (it was frozen meanwhile): a written value is shown only
+                // once the device returns it - next poll, or next Read for an On Request matrix.
+                ClearPendingEdits();
             }
         }
     }
@@ -129,8 +143,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
         {
             field = value;
             OnPropertyChanged();
-            OnPropertyChanged(nameof(IsWriteActive));
-            OnPropertyChanged(nameof(CanWriteDirty));
+            NotifyWriteStateChanged();
         }
     }
 
@@ -140,6 +153,14 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
     [IgnoreDataMember]
     public bool HasDirtyCells { get; private set { field = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanWriteDirty)); } }
 
+    /// <summary>Some cell failed to write (red tint of the Write button, same as the cell).</summary>
+    [IgnoreDataMember]
+    public bool HasWriteErrorCells { get; private set { field = value; OnPropertyChanged(); } }
+
+    /// <summary>Write button: shown in write mode when Enter does not write (Write on Enter off).</summary>
+    [IgnoreDataMember]
+    public bool IsWriteButtonVisible => IsWriteActive && !WriteOnEnter;
+
     /// <summary>Write button enablement: greys out until some cell is edited, greys back after the write.</summary>
     [IgnoreDataMember]
     public bool CanWriteDirty => IsWriteActive && HasDirtyCells;
@@ -148,18 +169,115 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
     [IgnoreDataMember]
     public RelayCommand<object> WriteDirtyCommand => field ??= new RelayCommand<object>(_ => _ = WriteDirtyCellsAsync());
 
-    [IgnoreDataMember]
-    public RelayCommand<object> ReadCommand => field ??= new RelayCommand<object>(_ => RefreshFromVariable());
-
     public void RefreshWriteCapability()
     {
         var variable = Variables?.FirstOrDefault();
         CanWrite = variable != null && (CanWriteVariableProvider?.Invoke(variable) ?? false);
     }
 
-    internal void OnCellDirtyChanged()
+    private void NotifyWriteStateChanged()
+    {
+        OnPropertyChanged(nameof(IsWriteActive));
+        OnPropertyChanged(nameof(IsWriteButtonVisible));
+        OnPropertyChanged(nameof(CanWriteDirty));
+    }
+
+    #endregion
+
+    #region Read on request (IVariableReadControl)
+
+    [IgnoreDataMember]
+    public Func<IVariableBase, bool>? CanReadVariableProvider { get; set; }
+
+    [IgnoreDataMember]
+    public Func<IVariableBase, Task<bool>>? ReadVariableAsync { get; set; }
+
+    /// <summary>True only for a matrix bound to an On Request event (decided by the protocol
+    /// through the host provider). The Read button asks the device for one read; for a
+    /// periodically polled matrix it is not shown at all (the table follows every poll).</summary>
+    [IgnoreDataMember]
+    public bool CanRead
+    {
+        get;
+        private set
+        {
+            field = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanReadNow));
+            ReadCommand.OnCanExecuteChanged();
+        }
+    }
+
+    [IgnoreDataMember]
+    public bool IsReadBusy
+    {
+        get;
+        private set
+        {
+            field = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanReadNow));
+            ReadCommand.OnCanExecuteChanged();
+        }
+    }
+
+    [IgnoreDataMember]
+    public bool CanReadNow => CanRead && !IsReadBusy;
+
+    /// <summary>Last on-request read failed (timeout, device error, not running): red tint of the
+    /// Read button and of the value cells, cleared by the next successful read or bus update.</summary>
+    [IgnoreDataMember]
+    public bool IsReadError { get; private set { field = value; OnPropertyChanged(); } }
+
+    // Lazy kvuli deserializaci (DataContractSerializer nevola konstruktor)
+    [IgnoreDataMember]
+    public RelayCommand<object> ReadCommand => field ??= new RelayCommand<object>(_ => _ = ReadFromDeviceAsync(), _ => CanReadNow);
+
+    public void RefreshReadCapability()
+    {
+        var variable = Variables?.FirstOrDefault();
+        CanRead = variable != null && (CanReadVariableProvider?.Invoke(variable) ?? false);
+    }
+
+    /// <summary>
+    /// Read button: one read of the matrix from the device (On Request event). On success the
+    /// table is re-rendered from the values just read, even in write mode (the display is frozen
+    /// there): an explicit Read means the user wants the fresh data; pending edits are discarded.
+    /// </summary>
+    private async Task ReadFromDeviceAsync()
+    {
+        if (!CanReadNow || !IsRun || ReadVariableAsync == null ||
+            Variables?.FirstOrDefault() is not MatrixVariable matrixVariable)
+        {
+            IsReadError = true;
+            return;
+        }
+
+        IsReadBusy = true;
+        try
+        {
+            var read = await ReadVariableAsync(matrixVariable);
+            IsReadError = !read;
+            if (read)
+            {
+                previousUpdateTime = DateTime.MinValue;
+                _ = Application.Current.Dispatcher.BeginInvoke(RefreshFromVariable);
+            }
+        }
+        catch
+        {
+            IsReadError = true;
+        }
+        finally
+        {
+            IsReadBusy = false;
+        }
+    }
+
+    internal void OnCellStateChanged()
     {
         HasDirtyCells = allCells.Any(c => c.IsDirty);
+        HasWriteErrorCells = allCells.Any(c => c.IsWriteError);
     }
 
     internal void CommitCell(MatrixCellViewModel cell)
@@ -201,10 +319,11 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
 
         if (written)
         {
+            // The display text is NOT touched: it shows the last value read from the device and
+            // the written one appears only once the device returns it (poll / Read).
             cell.IsWriteError = false;
             cell.IsDirty = false;
-            cell.Text = matrixVariable.GetPresentationText(cell.Kind, cell.Index);
-            cell.SetEditTextSilently(matrixVariable.GetEngValue(cell.Kind, cell.Index).ToString(CultureInfo.InvariantCulture));
+            cell.SetEditTextSilently(engValue.ToString(CultureInfo.InvariantCulture));
         }
         else
         {
@@ -220,6 +339,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
             NumberStyles.Float, CultureInfo.InvariantCulture, out engValue);
     }
 
+    /// <summary>Sets the edit boxes to the variable's current values without marking them dirty.</summary>
     private void PrefillEditTexts()
     {
         if (Variables?.FirstOrDefault() is not MatrixVariable matrixVariable)
@@ -230,6 +350,23 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
         foreach (var cell in allCells)
         {
             cell.SetEditTextSilently(matrixVariable.GetEngValue(cell.Kind, cell.Index).ToString(CultureInfo.InvariantCulture));
+            cell.IsDirty = false;
+            cell.IsWriteError = false;
+        }
+    }
+
+    /// <summary>Discards pending edits and write errors; the display texts stay as read.</summary>
+    private void ClearPendingEdits()
+    {
+        // allCells is null while the DataContractSerializer sets IsWriteMode (no constructor,
+        // OnDeserialized runs later); nothing to clear before the grid exists.
+        if (allCells == null)
+        {
+            return;
+        }
+
+        foreach (var cell in allCells)
+        {
             cell.IsDirty = false;
             cell.IsWriteError = false;
         }
@@ -251,13 +388,13 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
     public override async Task UpdateVariableValueAsync(IVariableBase protVariable)
     {
         // V rezimu write se automaticky neprepisuje ZADNA bunka (rozhodnuti Radka 2026-07-17);
-        // komunikace bezi dal, obnova az po opusteni rezimu nebo rucnim Read.
+        // komunikace bezi dal, obnova dalsim pollem po opusteni rezimu nebo rucnim Read.
         if (IsWriteActive)
         {
             return;
         }
 
-        if (!AutoRead || protVariable is not MatrixVariable matrixVariable)
+        if (protVariable is not MatrixVariable matrixVariable)
         {
             return;
         }
@@ -274,7 +411,11 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
 
         previousUpdateTime = protVariable.Timestamp;
 
-        _ = Application.Current.Dispatcher.BeginInvoke(() => ApplyVariable(matrixVariable));
+        _ = Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            ApplyVariable(matrixVariable);
+            IsReadError = false;
+        });
     }
 
     // Tabulka zobrazuje vyhradne matrix promenne (skalary patri Signal/Gauge/WatchTable)
@@ -299,8 +440,10 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
         RebuildGrid();
         RefreshFromVariable();
 
-        // Zapisovatelnost se musi prehodnotit pri kazdem (re)bindu
+        // Zapisovatelnost i citelnost na vyzadani se musi prehodnotit pri kazdem (re)bindu
         RefreshWriteCapability();
+        RefreshReadCapability();
+        IsReadError = false;
         if (IsWriteMode)
         {
             PrefillEditTexts();
@@ -320,6 +463,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
         ApplyHeader(variable);
         RebuildGrid();
         RefreshFromVariable();
+        RefreshReadCapability();
     }
 
     protected override void OnEditToRun()
@@ -397,6 +541,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl
 
         Rows = rows;
         HasDirtyCells = false;
+        HasWriteErrorCells = false;
     }
 
     /// <summary>Re-renders all cells from the bound variable; clears pending edits and errors.</summary>

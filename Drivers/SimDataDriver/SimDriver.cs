@@ -9,9 +9,10 @@ namespace Qenex.QSuite.Drivers.SimDataDriver;
 /// <summary>
 /// Virtual connection for the simulation protocol: no transport and no timing of its own.
 /// The hosted SimulDataProtocol generates the data itself in the periods of its variables'
-/// events; this driver only starts and stops the protocols.
+/// events; this driver starts and stops the protocols and, like the CAN, serial and TCP
+/// drivers, carries the operator commands (writes, on-request reads) to the owning protocol.
 /// </summary>
-public class SimDriver : DriverBase, ITransportSource<int>
+public class SimDriver : DriverBase, IProtocolVariableCommandDriver, ITransportSource<int>
 {
     #region Constructors
 
@@ -75,6 +76,59 @@ public class SimDriver : DriverBase, ITransportSource<int>
 
     public override void Dispose()
     {
+    }
+
+    #endregion
+
+    #region Protocol variable commands (operator writes, on-request reads)
+
+    // Same pattern as the CAN, serial and TCP client drivers: the module wires the value-changed
+    // and read-requested notifications to this driver, which delegates to the owning protocol.
+    // Without this the simulation variables have no read handler and every Read fails.
+    public bool CanSendCommand(IProtocolVariable protocolVariable)
+    {
+        return Protocols
+            .OfType<IProtocolVariableWriteProtocol>()
+            .Any(protocol => protocol.CanWriteVariable(protocolVariable));
+    }
+
+    public async Task OnProtocolVariableCommandAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        foreach (var protocol in Protocols.OfType<IProtocolVariableWriteProtocol>())
+        {
+            if (!protocol.CanWriteVariable(protocolVariable))
+            {
+                continue;
+            }
+
+            await protocol.WriteVariableAsync(protocolVariable, ct);
+            return;
+        }
+    }
+
+    public bool CanRequestRead(IProtocolVariable protocolVariable)
+    {
+        return Protocols
+            .OfType<IProtocolVariableReadProtocol>()
+            .Any(protocol => protocol.CanReadVariable(protocolVariable));
+    }
+
+    // Failures propagate so the requesting control sees them (the protocol has logged the reason).
+    public async Task OnProtocolVariableReadRequestAsync(IProtocolVariable protocolVariable, CancellationToken ct = default)
+    {
+        foreach (var protocol in Protocols.OfType<IProtocolVariableReadProtocol>())
+        {
+            if (!protocol.CanReadVariable(protocolVariable))
+            {
+                continue;
+            }
+
+            await protocol.ReadVariableAsync(protocolVariable, ct);
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"No protocol of this driver can read variable '{protocolVariable.Variable?.Name}' on request.");
     }
 
     #endregion
