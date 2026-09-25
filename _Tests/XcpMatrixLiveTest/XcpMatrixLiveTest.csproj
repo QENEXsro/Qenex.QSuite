@@ -8,8 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="D:\Projects\Qenex\Source\Qenex.QSuite\Drivers\TcpClientDriver\TcpClientDriver.csproj" />
-    <ProjectReference Include="D:\Projects\Qenex\Source\Qenex.QSuite\Protocols\XcpTcpProtocol\XcpTcpProtocol.csproj" />
+    <ProjectReference Include="..\..\Drivers\TcpClientDriver\TcpClientDriver.csproj" />
+    <ProjectReference Include="..\..\Protocols\XcpTcpProtocol\XcpTcpProtocol.csproj" />
   </ItemGroup>
 
 </Project>
