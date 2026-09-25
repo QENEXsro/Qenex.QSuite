@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="D:\Projects\Qenex\Source\Qenex.QSuite\Drivers\TcpClientDriver\TcpClientDriver.csproj" />
+    <ProjectReference Include="D:\Projects\Qenex\Source\Qenex.QSuite\Protocols\XcpTcpProtocol\XcpTcpProtocol.csproj" />
+  </ItemGroup>
+
+</Project>
