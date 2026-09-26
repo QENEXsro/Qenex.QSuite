@@ -44,6 +44,10 @@ public class MatrixCellViewModel : INotifyPropertyChanged
     /// separator line towards the data under it.</summary>
     public bool IsXAxisRow => IsPlaceholder || Kind == MatrixSectionKind.XAxis;
 
+    /// <summary>Cell of the Y axis column (breakpoint or the map corner): the view draws the
+    /// separator line towards the data at its right edge.</summary>
+    public bool IsYAxisColumn => IsPlaceholder || Kind == MatrixSectionKind.YAxis;
+
     /// <summary>Position in the table (row 0 = X axis when present, column 0 = Y axis when present).</summary>
     public int Row { get; }
     public int Column { get; }

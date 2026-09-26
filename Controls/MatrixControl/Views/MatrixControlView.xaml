@@ -30,8 +30,8 @@
 			     a text box exists only for the one cell being edited (CellEditTemplate). -->
 			<!-- The X axis row draws the separator towards the data itself (2 px line at the cell
 			     bottom, text colour of the loaded palette): cell / row borders from the styles are not
-			     rendered by the host, content is (2026-09-26). The Y axis is a frozen column: the grid
-			     draws its splitter. -->
+			     rendered by the host, content is (2026-09-26). The Y axis is a frozen column (stays
+			     visible while scrolling); its separator is drawn the same way, the theme splitter is hidden. -->
 			<DataTemplate x:Key="MatrixCellTemplate">
 				<Grid>
 					<TextBlock Text="{Binding Value.DisplayText, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}}"
@@ -39,6 +39,11 @@
 					<Rectangle Height="2" VerticalAlignment="Bottom" Margin="-4,0,-4,-2"
 					           Fill="{telerik:Windows11Resource ResourceKey=PrimaryForegroundBrush}"
 					           Visibility="{Binding Value.IsXAxisRow, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}, Converter={StaticResource TrueToVisible}}"/>
+					<!-- Same line at the right edge of the Y axis column (the theme's blue frozen-column
+					     splitter is hidden; the column stays frozen) -->
+					<Rectangle Width="2" HorizontalAlignment="Right" Margin="0,-2,-3,-2"
+					           Fill="{telerik:Windows11Resource ResourceKey=PrimaryForegroundBrush}"
+					           Visibility="{Binding Value.IsYAxisColumn, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}, Converter={StaticResource TrueToVisible}}"/>
 				</Grid>
 			</DataTemplate>
 			<!-- Zadny lokalni Style: prebil by implicitni theme styl QTextBoxu (barvy tematu). -->
@@ -208,6 +213,7 @@
 			                     ItemsSource="{Binding Rows}"
 			                     RowStyle="{StaticResource MatrixRowStyle}"
 			                     FrozenColumnCount="{Binding FrozenColumnCount}"
+			                     FrozenColumnsSplitterVisibility="Collapsed"
 			                     IsReadOnly="{Binding IsWriteActive, Converter={StaticResource InverseBool}}"
 			                     AutoGenerateColumns="False"
 			                     ShowColumnHeaders="False"
