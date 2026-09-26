@@ -13,10 +13,10 @@ namespace Qenex.QSuite.Controls.MatrixControl.Behaviors;
 ///   (Excel-like walk through the table);
 /// - Enter while editing: commit the cell and run its CommitCommand (Write on Enter writes it,
 ///   otherwise it stays pending for the Write button);
-/// - Ctrl+V / Shift+Insert: paste the clipboard text through the view model's PasteCommand
-///   starting at the top-left cell of the selection (RadGridView's own paste is off);
-/// - Ctrl+C / Ctrl+Insert: copy the selected rectangle as tab / line separated text (view model).
-/// Everything else is the default RadGridView behaviour (arrows, F2, ...).
+/// Copy / paste are NOT keys here: RadGridView runs its own clipboard commands before any
+/// keyboard provider; MatrixGridBehavior hooks the grid events (copy = shown text of the cell,
+/// paste = cancelled and handed to <see cref="PasteFromClipboard"/>).
+/// Everything else is the default RadGridView behaviour (arrows, F2, Ctrl+C, ...).
 /// </summary>
 public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
 {
@@ -47,20 +47,6 @@ public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
             return [RadGridViewCommands.CommitEdit, new RelayCommand<object>(_ => CommitCurrentCell())];
         }
 
-        if (!editing &&
-            ((key == Key.V && modifiers.HasFlag(ModifierKeys.Control)) ||
-             (key == Key.Insert && modifiers.HasFlag(ModifierKeys.Shift))))
-        {
-            return [new RelayCommand<object>(_ => Paste())];
-        }
-
-        if (!editing &&
-            ((key == Key.C && modifiers.HasFlag(ModifierKeys.Control)) ||
-             (key == Key.Insert && modifiers.HasFlag(ModifierKeys.Control))))
-        {
-            return [new RelayCommand<object>(_ => Copy())];
-        }
-
         return base.ProvideCommandsForKey(key);
     }
 
@@ -73,26 +59,12 @@ public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
         }
     }
 
-    /// <summary>Ctrl+C: the rectangle of the selected cells as tab / line separated text (the
-    /// view model formats it), so Excel gets exactly the block, whatever RadGridView would copy.</summary>
-    private void Copy()
-    {
-        if (grid.DataContext is not MatrixControlViewModel viewModel || !TrySelectionRectangle(out var top, out var left, out var bottom, out var right))
-        {
-            return;
-        }
-
-        var text = viewModel.CopyText(top, left, bottom - top + 1, right - left + 1);
-        if (text.Length > 0)
-        {
-            Clipboard.SetText(text);
-        }
-    }
-
-    private void Paste()
+    /// <summary>Paste (RadGridView Pasting event, cancelled by the behavior): the clipboard text
+    /// goes to the view model with the selected rectangle - fit check and dirty cells happen there.</summary>
+    public static void PasteFromClipboard(RadGridView grid)
     {
         if (grid.DataContext is not MatrixControlViewModel viewModel || !Clipboard.ContainsText() ||
-            !TrySelectionRectangle(out var top, out var left, out var bottom, out var right))
+            !TrySelectionRectangle(grid, out var top, out var left, out var bottom, out var right))
         {
             return;
         }
@@ -101,7 +73,7 @@ public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
     }
 
     /// <summary>Rectangle of the selected cells (or the current cell) in table coordinates.</summary>
-    private bool TrySelectionRectangle(out int top, out int left, out int bottom, out int right)
+    private static bool TrySelectionRectangle(RadGridView grid, out int top, out int left, out int bottom, out int right)
     {
         top = left = bottom = right = -1;
         var selected = grid.SelectedCells

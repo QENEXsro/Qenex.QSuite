@@ -2,7 +2,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using Qenex.QSuite.Controls.MatrixControl.ViewModels;
 using Telerik.Windows.Controls;
+using Telerik.Windows.Controls.GridView;
 using GridViewLength = Telerik.Windows.Controls.GridViewLength;
 
 namespace Qenex.QSuite.Controls.MatrixControl.Behaviors;
@@ -70,11 +72,35 @@ public static class MatrixGridBehavior
         if ((bool)e.NewValue)
         {
             grid.KeyboardCommandProvider = new MatrixKeyboardCommandProvider(grid);
+            // Clipboard: RadGridView handles Ctrl+C / Ctrl+V itself (its commands run before any
+            // keyboard provider), so the grid events are the hook - copy takes the shown text of
+            // the cell, paste is cancelled and handed to the view model (fit check, dirty cells).
+            grid.CopyingCellClipboardContent += OnCopyingCellClipboardContent;
+            grid.Pasting += OnPasting;
             RebuildColumns(grid);
         }
         else
         {
+            grid.CopyingCellClipboardContent -= OnCopyingCellClipboardContent;
+            grid.Pasting -= OnPasting;
             grid.Columns.Clear();
+        }
+    }
+
+    private static void OnCopyingCellClipboardContent(object? sender, GridViewCellClipboardEventArgs e)
+    {
+        if (e.Value is MatrixCellViewModel cell)
+        {
+            e.Value = cell.IsPlaceholder ? string.Empty : cell.DisplayText;
+        }
+    }
+
+    private static void OnPasting(object? sender, GridViewClipboardEventArgs e)
+    {
+        e.Cancel = true;
+        if (sender is RadGridView grid)
+        {
+            MatrixKeyboardCommandProvider.PasteFromClipboard(grid);
         }
     }
 
