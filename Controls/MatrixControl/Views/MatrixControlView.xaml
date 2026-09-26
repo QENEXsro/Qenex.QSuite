@@ -23,6 +23,7 @@
 			<conv:EmptyToCollapsedConverter x:Key="EmptyToCollapsed"/>
 			<conv:ErrorToBackgroundConverter x:Key="ErrorBackground"/>
 			<conv:InverseBoolConverter x:Key="InverseBool"/>
+			<conv:ColorToBrushConverter x:Key="ColorToBrush"/>
 
 			<!-- Cell of the table. The grid columns bind the cell view model itself (row.Cells[i]),
 			     so the templates reach it through the GridViewCell.Value of their cell. Display =
@@ -51,19 +52,21 @@
 				<Setter Property="Padding" Value="3,1"/>
 				<Setter Property="Background" Value="{Binding Value.Background, RelativeSource={RelativeSource Self}}"/>
 				<Style.Triggers>
+					<!-- Separator line between the axes and the data in the saved theme text colour
+					     (ControlBase.ForegroundColor, set by the host for the dark / light theme) -->
 					<DataTrigger Binding="{Binding Value.Kind, RelativeSource={RelativeSource Self}}" Value="XAxis">
-						<Setter Property="BorderBrush" Value="#FF909090"/>
-						<Setter Property="BorderThickness" Value="0,0,0,2"/>
+						<Setter Property="BorderBrush" Value="{Binding DataContext.ForegroundColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrush}}"/>
+						<Setter Property="BorderThickness" Value="0,0,0,1"/>
 						<Setter Property="Padding" Value="3,1,3,4"/>
 					</DataTrigger>
 					<DataTrigger Binding="{Binding Value.Kind, RelativeSource={RelativeSource Self}}" Value="YAxis">
-						<Setter Property="BorderBrush" Value="#FF909090"/>
-						<Setter Property="BorderThickness" Value="0,0,2,0"/>
+						<Setter Property="BorderBrush" Value="{Binding DataContext.ForegroundColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrush}}"/>
+						<Setter Property="BorderThickness" Value="0,0,1,0"/>
 						<Setter Property="Padding" Value="3,1,6,1"/>
 					</DataTrigger>
 					<DataTrigger Binding="{Binding Value.IsPlaceholder, RelativeSource={RelativeSource Self}}" Value="True">
-						<Setter Property="BorderBrush" Value="#FF909090"/>
-						<Setter Property="BorderThickness" Value="0,0,2,2"/>
+						<Setter Property="BorderBrush" Value="{Binding DataContext.ForegroundColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrush}}"/>
+						<Setter Property="BorderThickness" Value="0,0,1,1"/>
 						<Setter Property="Padding" Value="3,1,6,4"/>
 					</DataTrigger>
 				</Style.Triggers>
@@ -100,16 +103,17 @@
 				<ColumnDefinition Width="*"/>
 			</Grid.ColumnDefinitions>
 
+			<!-- Settings in two column pairs (3 rows) so they fit a low control such as a curve
+			     (the expander content is clipped by the control height, Radek 2026-09-26) -->
 			<telerik:RadExpander Grid.Column="0" Style="{StaticResource SquareExpanderStyle}" HorizontalAlignment="Left">
 				<Grid Margin="5">
 					<Grid.ColumnDefinitions>
 						<ColumnDefinition Width="Auto"/>
 						<ColumnDefinition Width="Auto"/>
+						<ColumnDefinition Width="Auto"/>
+						<ColumnDefinition Width="Auto"/>
 					</Grid.ColumnDefinitions>
 					<Grid.RowDefinitions>
-						<RowDefinition Height="Auto"/>
-						<RowDefinition Height="Auto"/>
-						<RowDefinition Height="Auto"/>
 						<RowDefinition Height="Auto"/>
 						<RowDefinition Height="Auto"/>
 						<RowDefinition Height="Auto"/>
@@ -123,27 +127,28 @@
 					<q:QTextBox Grid.Column="1" Grid.Row="1" Text="{Binding CellWidth, Mode=TwoWay}"
 					            Margin="8,3,0,0" HorizontalAlignment="Left" Height="20" Width="50" VerticalAlignment="Center"/>
 
-					<!-- Colour scale of the data cells: on/off, range and spectrum (persisted in the project) -->
-					<q:QTextBlock Grid.Column="0" Grid.Row="2" Text="Color scale:" Margin="0,3,0,0" HorizontalAlignment="Left"/>
-					<CheckBox Grid.Column="1" Grid.Row="2" IsChecked="{Binding IsHeatmapEnabled, Mode=TwoWay}"
-					          Margin="8,3,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
+					<!-- Colour scale of the data cells: on/off, range and spectrum (persisted in the project).
+					     CheckBox without the theme padding / min height (GraphControl pattern) so its box sits
+					     on the text box line, not below and to the right of it. -->
+					<q:QTextBlock Grid.Column="2" Grid.Row="0" Text="Color scale:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
+					<CheckBox Grid.Column="3" Grid.Row="0" IsChecked="{Binding IsHeatmapEnabled, Mode=TwoWay}"
+					          Margin="8,3,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Height="20"
+					          MinHeight="0" MinWidth="0" Padding="0"
 					          ToolTip="Tint the data cells by value between Min and Max"/>
 
-					<q:QTextBlock Grid.Column="0" Grid.Row="3" Text="Min:" Margin="0,3,0,0" HorizontalAlignment="Left"/>
-					<q:QTextBox Grid.Column="1" Grid.Row="3" Text="{Binding HeatMinimum, Mode=TwoWay}"
-					            Margin="8,3,0,0" HorizontalAlignment="Left" Height="20" Width="70" VerticalAlignment="Center"
-					            IsEnabled="{Binding IsHeatmapEnabled}"/>
+					<q:QTextBlock Grid.Column="2" Grid.Row="1" Text="Min / Max:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
+					<StackPanel Grid.Column="3" Grid.Row="1" Orientation="Horizontal" Margin="8,3,0,0" HorizontalAlignment="Left">
+						<q:QTextBox Text="{Binding HeatMinimum, Mode=TwoWay}" Height="20" Width="60" VerticalAlignment="Center"
+						            IsEnabled="{Binding IsHeatmapEnabled}"/>
+						<q:QTextBox Text="{Binding HeatMaximum, Mode=TwoWay}" Height="20" Width="60" Margin="4,0,0,0" VerticalAlignment="Center"
+						            IsEnabled="{Binding IsHeatmapEnabled}"/>
+					</StackPanel>
 
-					<q:QTextBlock Grid.Column="0" Grid.Row="4" Text="Max:" Margin="0,3,0,0" HorizontalAlignment="Left"/>
-					<q:QTextBox Grid.Column="1" Grid.Row="4" Text="{Binding HeatMaximum, Mode=TwoWay}"
-					            Margin="8,3,0,0" HorizontalAlignment="Left" Height="20" Width="70" VerticalAlignment="Center"
-					            IsEnabled="{Binding IsHeatmapEnabled}"/>
-
-					<q:QTextBlock Grid.Column="0" Grid.Row="5" Text="Spectrum:" Margin="0,3,0,0" HorizontalAlignment="Left"/>
-					<telerik:RadComboBox Grid.Column="1" Grid.Row="5" ItemsSource="{Binding Spectrums}"
+					<q:QTextBlock Grid.Column="2" Grid.Row="2" Text="Spectrum:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
+					<telerik:RadComboBox Grid.Column="3" Grid.Row="2" ItemsSource="{Binding Spectrums}"
 					                     SelectedItem="{Binding HeatSpectrum, Mode=TwoWay}"
-					                     Margin="8,3,0,0" HorizontalAlignment="Left" Width="120" VerticalAlignment="Center"
-					                     IsEnabled="{Binding IsHeatmapEnabled}"/>
+					                     Margin="8,3,0,0" HorizontalAlignment="Left" Width="124" Height="22" MinHeight="0" Padding="8,0"
+					                     VerticalAlignment="Center" IsEnabled="{Binding IsHeatmapEnabled}"/>
 				</Grid>
 			</telerik:RadExpander>
 
