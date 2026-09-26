@@ -156,6 +156,15 @@ public class MatrixCellViewModel : INotifyPropertyChanged
     /// <summary>Enter in the edit box: immediate write when Write on Enter is ticked.</summary>
     public ICommand CommitCommand => field ??= new RelayCommand<object>(_ => owner.CommitCell(this));
 
+    /// <summary>Pasted text: becomes the edit text and the cell is marked dirty even when the
+    /// value did not change (the pasted block is highlighted like edited cells, Radek 2026-09-26).</summary>
+    public void SetPastedText(string text)
+    {
+        SetEditTextSilently(text);
+        IsWriteError = false;
+        IsDirty = true;
+    }
+
     /// <summary>Sets the edit text without marking the cell dirty (prefill/refresh).</summary>
     public void SetEditTextSilently(string text)
     {

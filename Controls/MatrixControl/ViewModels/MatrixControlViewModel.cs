@@ -265,6 +265,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
                 // read from the device (it was frozen meanwhile): a written value is shown only
                 // once the device returns it - next poll, or next Read for an On Request matrix.
                 ClearPendingEdits();
+                PasteMessage = string.Empty;
             }
 
             NotifyWriteStateChanged();
@@ -511,17 +512,42 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
             NumberStyles.Float, CultureInfo.InvariantCulture, out engValue);
     }
 
+    /// <summary>Why the last paste was refused (shown red in the header); empty after a successful
+    /// paste or when write mode is left.</summary>
+    [IgnoreDataMember]
+    public string PasteMessage
+    {
+        get;
+        private set
+        {
+            field = value ?? string.Empty;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasPasteMessage));
+        }
+    } = string.Empty;
+
+    [IgnoreDataMember]
+    public bool HasPasteMessage => !string.IsNullOrEmpty(PasteMessage);
+
     /// <summary>
     /// Paste from the clipboard (Excel format: cells separated by tabs, rows by line breaks)
-    /// starting at the top-left cell of the selection; only in write mode. Every pasted text
-    /// becomes the edit text of its cell and marks it dirty when it differs (the Write button /
-    /// Enter then sends it). A single value pasted into a multi-cell selection fills the
-    /// selection. Cells outside the table and the map corner are skipped; empty cells are kept.
+    /// starting at the top-left cell of the selection; only in write mode. Like the Calibro
+    /// ParamControl: the block must fit into the table from that cell, otherwise nothing is
+    /// pasted and the reason is shown in the header. Every pasted cell becomes dirty (yellow)
+    /// like an edited one, even when its value did not change; the Write button / Enter sends
+    /// them. A single value pasted into a multi-cell selection fills the selection; the map
+    /// corner is skipped; empty clipboard cells leave the cell untouched.
     /// </summary>
     internal void Paste(MatrixPasteRequest request)
     {
-        if (!IsWriteActive || string.IsNullOrEmpty(request.Text) || request.Row < 0 || request.Column < 0)
+        if (!IsWriteActive)
         {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(request.Text) || request.Row < 0 || request.Column < 0 || request.Row >= Rows.Count)
+        {
+            PasteMessage = "Paste: nothing to paste here.";
             return;
         }
 
@@ -533,6 +559,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
 
         if (lines.Count == 0)
         {
+            PasteMessage = "Paste: the clipboard is empty.";
             return;
         }
 
@@ -540,35 +567,62 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         var single = block.Count == 1 && block[0].Length == 1;
         var rowCount = single ? Math.Max(1, request.RowCount) : block.Count;
         var columnCount = single ? Math.Max(1, request.ColumnCount) : block.Max(r => r.Length);
+        var tableColumns = Rows[request.Row].Count;
+
+        if (request.Row + rowCount > Rows.Count || request.Column + columnCount > tableColumns)
+        {
+            PasteMessage = $"Paste refused: {rowCount} x {columnCount} cells do not fit at row {request.Row + 1}, column {request.Column + 1} " +
+                           $"(table {Rows.Count} x {tableColumns}).";
+            return;
+        }
 
         for (var i = 0; i < rowCount; i++)
         {
-            var rowIndex = request.Row + i;
-            if (rowIndex >= Rows.Count)
-            {
-                break;
-            }
-
-            var row = Rows[rowIndex];
+            var row = Rows[request.Row + i];
             var values = single ? block[0] : block[i];
             for (var j = 0; j < columnCount; j++)
             {
-                var columnIndex = request.Column + j;
-                if (columnIndex >= row.Count)
-                {
-                    break;
-                }
-
                 var text = (single ? values[0] : j < values.Length ? values[j] : string.Empty).Trim();
-                var cell = row[columnIndex];
+                var cell = row[request.Column + j];
                 if (text.Length == 0 || cell.IsPlaceholder)
                 {
                     continue;
                 }
 
-                cell.EditText = text;
+                cell.SetPastedText(text);
             }
         }
+
+        PasteMessage = string.Empty;
+    }
+
+    /// <summary>Clipboard text of a rectangular block of cells (tabs between cells, line breaks
+    /// between rows - the format Excel pastes); the map corner is an empty cell.</summary>
+    public string CopyText(int top, int left, int rowCount, int columnCount)
+    {
+        var lines = new List<string>();
+        for (var i = 0; i < rowCount; i++)
+        {
+            var rowIndex = top + i;
+            if (rowIndex < 0 || rowIndex >= Rows.Count)
+            {
+                continue;
+            }
+
+            var row = Rows[rowIndex];
+            var values = new List<string>();
+            for (var j = 0; j < columnCount; j++)
+            {
+                var columnIndex = left + j;
+                values.Add(columnIndex >= 0 && columnIndex < row.Count && !row[columnIndex].IsPlaceholder
+                    ? row[columnIndex].DisplayText
+                    : string.Empty);
+            }
+
+            lines.Add(string.Join("\t", values));
+        }
+
+        return string.Join("\r\n", lines) + (lines.Count > 0 ? "\r\n" : string.Empty);
     }
 
     /// <summary>Sets the edit boxes to the variable's current values without marking them dirty.</summary>

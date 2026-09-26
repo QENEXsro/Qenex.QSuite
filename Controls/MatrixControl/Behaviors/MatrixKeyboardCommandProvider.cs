@@ -14,8 +14,9 @@ namespace Qenex.QSuite.Controls.MatrixControl.Behaviors;
 /// - Enter while editing: commit the cell and run its CommitCommand (Write on Enter writes it,
 ///   otherwise it stays pending for the Write button);
 /// - Ctrl+V / Shift+Insert: paste the clipboard text through the view model's PasteCommand
-///   starting at the top-left cell of the selection (RadGridView's own paste is off).
-/// Everything else is the default RadGridView behaviour (arrows, F2, Ctrl+C copy of the selection).
+///   starting at the top-left cell of the selection (RadGridView's own paste is off);
+/// - Ctrl+C / Ctrl+Insert: copy the selected rectangle as tab / line separated text (view model).
+/// Everything else is the default RadGridView behaviour (arrows, F2, ...).
 /// </summary>
 public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
 {
@@ -53,6 +54,13 @@ public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
             return [new RelayCommand<object>(_ => Paste())];
         }
 
+        if (!editing &&
+            ((key == Key.C && modifiers.HasFlag(ModifierKeys.Control)) ||
+             (key == Key.Insert && modifiers.HasFlag(ModifierKeys.Control))))
+        {
+            return [new RelayCommand<object>(_ => Copy())];
+        }
+
         return base.ProvideCommandsForKey(key);
     }
 
@@ -65,14 +73,37 @@ public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
         }
     }
 
-    private void Paste()
+    /// <summary>Ctrl+C: the rectangle of the selected cells as tab / line separated text (the
+    /// view model formats it), so Excel gets exactly the block, whatever RadGridView would copy.</summary>
+    private void Copy()
     {
-        if (grid.DataContext is not MatrixControlViewModel viewModel || !Clipboard.ContainsText())
+        if (grid.DataContext is not MatrixControlViewModel viewModel || !TrySelectionRectangle(out var top, out var left, out var bottom, out var right))
         {
             return;
         }
 
-        int top, left, bottom, right;
+        var text = viewModel.CopyText(top, left, bottom - top + 1, right - left + 1);
+        if (text.Length > 0)
+        {
+            Clipboard.SetText(text);
+        }
+    }
+
+    private void Paste()
+    {
+        if (grid.DataContext is not MatrixControlViewModel viewModel || !Clipboard.ContainsText() ||
+            !TrySelectionRectangle(out var top, out var left, out var bottom, out var right))
+        {
+            return;
+        }
+
+        viewModel.PasteCommand.Execute(new MatrixPasteRequest(top, left, bottom - top + 1, right - left + 1, Clipboard.GetText()));
+    }
+
+    /// <summary>Rectangle of the selected cells (or the current cell) in table coordinates.</summary>
+    private bool TrySelectionRectangle(out int top, out int left, out int bottom, out int right)
+    {
+        top = left = bottom = right = -1;
         var selected = grid.SelectedCells
             .Where(c => c.Item is MatrixRowViewModel && c.Column != null)
             .Select(c => (row: ((MatrixRowViewModel)c.Item).RowIndex, column: c.Column.DisplayIndex))
@@ -91,9 +122,9 @@ public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
         }
         else
         {
-            return;
+            return false;
         }
 
-        viewModel.PasteCommand.Execute(new MatrixPasteRequest(top, left, bottom - top + 1, right - left + 1, Clipboard.GetText()));
+        return true;
     }
 }

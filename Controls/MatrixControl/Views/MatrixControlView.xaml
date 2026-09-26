@@ -172,6 +172,10 @@
 				<q:QTextBlock Text=" ["/>
 				<q:QTextBlock Text="{Binding DataUnit}"/>
 				<q:QTextBlock Text="]"/>
+				<!-- Refused paste (block does not fit at the selected cell): reason with a red tint -->
+				<q:QTextBlock Text="{Binding PasteMessage}" Margin="12,0,0,0" Padding="4,0" TextWrapping="NoWrap"
+				              Background="{Binding HasPasteMessage, Converter={StaticResource ErrorBackground}}"
+				              Visibility="{Binding PasteMessage, Converter={StaticResource EmptyToCollapsed}}"/>
 			</StackPanel>
 		</Grid>
 
@@ -221,7 +225,7 @@
 			                     RowIndicatorVisibility="Collapsed"
 			                     SelectionUnit="Cell"
 			                     SelectionMode="Extended"
-			                     ClipboardCopyMode="Cells"
+			                     ClipboardCopyMode="None"
 			                     ClipboardPasteMode="None"
 			                     GroupRenderMode="Flat"
 			                     EnableRowVirtualization="True"
