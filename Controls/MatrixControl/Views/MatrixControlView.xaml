@@ -130,9 +130,11 @@
 					<!-- Colour scale of the data cells: on/off, range and spectrum (persisted in the project).
 					     CheckBox without the theme padding / min height (GraphControl pattern) so its box sits
 					     on the text box line, not below and to the right of it. -->
-					<q:QTextBlock Grid.Column="2" Grid.Row="0" Text="Color scale:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
+					<!-- The Windows11 check glyph is 26 px (not scaled, Radek 2026-09-26): the check box and
+					     its label sit centred on the line, no top margin, so the row keeps its height -->
+					<q:QTextBlock Grid.Column="2" Grid.Row="0" Text="Color scale:" Margin="16,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"/>
 					<CheckBox Grid.Column="3" Grid.Row="0" IsChecked="{Binding IsHeatmapEnabled, Mode=TwoWay}"
-					          Margin="8,3,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
+					          Margin="8,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
 					          MinHeight="0" MinWidth="0" Padding="0"
 					          ToolTip="Tint the data cells by value between Min and Max"/>
 
