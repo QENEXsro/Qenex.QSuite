@@ -940,6 +940,11 @@ public partial class ShellWindowModel
 
             var findings = ReportProjectValidationFindings(projectData, Path.GetFileName(filePath));
 
+            // Splash (own thread, keeps animating) while the workspaces and controls are built on
+            // the UI thread; at least 0.8 s so a small project does not make it flash.
+            var splash = new ProjectOpenSplash();
+            splash.Show(Path.GetFileNameWithoutExtension(filePath));
+
             // The docking is rebuilt in several steps (old panes removed, new panes created at
             // their default place, saved layout restored). Hide it meanwhile so the user sees one
             // transition instead of the workspace flashing twice (Radek 2026-09-25).
@@ -959,6 +964,7 @@ public partial class ShellWindowModel
                 isEditEventEnabled = false;
                 realProjectData = RealProjectData.CreateRealProjectData(driverPlugins, protocolPlugins, projectData, ShellWindow.MainAppSettings.ScriptEngine, logger);
                 solutionExplorerViewModel.ReloadProjectData(realProjectData);
+                splash.Step("Building workspaces...");
                 LoadProjectWorkspaces(projectData.Workspaces);
                 LoadProjectScriptDocuments(projectData.ScriptDocuments);
                 LoadProjectPythonInterpreter(projectData.WorkspaceLayout);
@@ -978,6 +984,8 @@ public partial class ShellWindowModel
                 {
                     docking.Opacity = 1;
                 }
+
+                await splash.CloseAsync();
             }
                 
             currentProjectFilePath = Path.GetFullPath(filePath);

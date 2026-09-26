@@ -1,0 +1,18 @@
+<UserControl x:Class="Qenex.QInsight.Views.ProjectOpenSplashContent"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:telerik="http://schemas.telerik.com/2008/xaml/presentation"
+             Width="560" Height="280">
+	<!-- Content of the project-open splash (RadSplashScreenManager.Show<ProjectOpenSplashContent>):
+	     a fixed, readable size instead of the tiny default splash; DataContext = SplashScreenDataContext
+	     set by ProjectOpenSplash (logo, title, current step, indeterminate progress). -->
+	<telerik:RadSplashScreen ImagePath="{Binding ImagePath}"
+	                         ImageWidth="{Binding ImageWidth}"
+	                         ImageHeight="{Binding ImageHeight}"
+	                         Content="{Binding Content}"
+	                         Footer="{Binding Footer}"
+	                         IsIndeterminate="{Binding IsIndeterminate}"
+	                         FontSize="18"
+	                         HorizontalContentAlignment="Center"
+	                         HorizontalFooterAlignment="Center"/>
+</UserControl>
