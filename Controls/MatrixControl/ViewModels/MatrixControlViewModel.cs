@@ -467,13 +467,25 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
     {
         foreach (var cell in allCells.Where(c => c.IsDirty).ToList())
         {
+            // Leaving write mode (or the runtime) while a long write runs cancels the rest
+            // silently: the pending edits were discarded, they are no errors.
+            if (!IsWriteActive || !IsRun)
+            {
+                return;
+            }
+
             await WriteCellAsync(cell);
         }
     }
 
     private async Task<bool> WriteCellAsync(MatrixCellViewModel cell)
     {
-        if (!IsWriteActive || !IsRun || WriteMatrixElementEngValueAsync == null ||
+        if (!IsWriteActive || !IsRun)
+        {
+            return false;
+        }
+
+        if (WriteMatrixElementEngValueAsync == null ||
             Variables?.FirstOrDefault() is not MatrixVariable matrixVariable ||
             !TryParseEngValue(cell.EditText, out var engValue))
         {
@@ -767,6 +779,14 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
     protected override void OnEditToRun()
     {
         ClearCells();
+
+        // A runtime start ends write mode: its pending edits are gone with the cleared cells, and
+        // a table left in write mode would ignore the polls and stay orange and empty until the
+        // user noticed (Radek 2026-09-26: "dark yellow map without the colour scale").
+        if (IsWriteMode)
+        {
+            IsWriteMode = false;
+        }
     }
 
     /// <summary>Empties all cells (display, edit boxes, colour scale, flags); the grid shape and
