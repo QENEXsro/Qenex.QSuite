@@ -670,7 +670,9 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
 
         ApplyHeader(protVariable);
         RebuildGrid();
-        RefreshFromVariable();
+        // Nothing from the variable memory (zeros after a project load): the cells are filled
+        // only by data from the device (poll / Read), rule of Radek 2026-09-25/26.
+        ClearCells();
 
         // Zapisovatelnost i citelnost na vyzadani se musi prehodnotit pri kazdem (re)bindu
         RefreshWriteCapability();
@@ -691,10 +693,10 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
             return;
         }
 
-        // Layout (sekce, typy) se mohl v konfiguraci zmenit — prestav tabulku.
+        // Layout (sekce, typy) se mohl v konfiguraci zmenit — prestav tabulku (prazdnou, viz BindVariable).
         ApplyHeader(variable);
         RebuildGrid();
-        RefreshFromVariable();
+        ClearCells();
         RefreshReadCapability();
     }
 
@@ -703,6 +705,13 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
     /// (rule "truth is what comes from the device", Radek 2026-09-25). The write-mode edit
     /// boxes are emptied as well.</summary>
     protected override void OnEditToRun()
+    {
+        ClearCells();
+    }
+
+    /// <summary>Empties all cells (display, edit boxes, colour scale, flags); the grid shape and
+    /// the axis captions stay. Used on bind, configuration change and Edit -> Run.</summary>
+    private void ClearCells()
     {
         previousUpdateTime = DateTime.MinValue;
         IsReadError = false;
