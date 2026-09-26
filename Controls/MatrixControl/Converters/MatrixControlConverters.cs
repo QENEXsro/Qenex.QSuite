@@ -15,6 +15,16 @@ public class TrueToCollapsedConverter : IValueConverter
         => throw new NotSupportedException();
 }
 
+/// <summary>Negace bool (IsReadOnly gridu = !IsWriteActive).</summary>
+public class InverseBoolConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is not true;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is not true;
+}
+
 /// <summary>Prazdny/null text -> Collapsed (popisky os se zobrazuji jen kdyz existuji).</summary>
 public class EmptyToCollapsedConverter : IValueConverter
 {

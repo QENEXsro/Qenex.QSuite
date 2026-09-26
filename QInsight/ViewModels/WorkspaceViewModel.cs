@@ -97,6 +97,10 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
     /// request (On Request event). Mirror of CanWriteProtocolVariable.</summary>
     public Func<IProtocolVariable, bool>? CanReadProtocolVariable { get; set; }
 
+    /// <summary>Application log handed to every control (IControlBase.Logger), the same instance
+    /// the module, drivers and protocols log into.</summary>
+    public ILogger? Logger { get; set; }
+
     #endregion
     
     #region ViewModelBase implementation
@@ -299,6 +303,8 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 
     private void ConfigureControl(IControlBase controlVm)
     {
+	    controlVm.Logger = Logger;
+
 	    if (controlVm is ILogAwareControl logAwareControl && controlVm is ControlBase logControlBase)
 	    {
 		    logAwareControl.LogInfo = message =>
@@ -324,6 +330,7 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 		    if (writeControl is IMatrixVariableWriteControl matrixWriteControl)
 		    {
 			    matrixWriteControl.WriteMatrixElementEngValueAsync = WriteControlMatrixElementEngValueAsync;
+			    matrixWriteControl.WriteMatrixElementsEngValueAsync = WriteControlMatrixElementsEngValueAsync;
 		    }
 
 		    writeControl.RefreshWriteCapability();
@@ -434,6 +441,50 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 	    var byteOffset = matrixVariable.GetSectionOffset(kind) + index * elementSize;
 	    var bytes = matrixVariable.RawData.AsSpan(byteOffset, elementSize).ToArray();
 	    matrixVariable.EnqueuePendingWrite(new MatrixWriteRequest(byteOffset, bytes));
+
+	    await NotifyOperatorWriteAsync(protocolVariable);
+	    return true;
+    }
+
+    /// <summary>
+    /// Zapis vice bunek matice najednou (tlacitko Write): vsechny hodnoty do raw bufferu a do
+    /// fronty zapisu, potom JEDNA notifikace - protokol si sousedni bunky slouci do oken
+    /// (XCP: radek 64 bunek = jeden DOWNLOAD blok). Vse nebo nic: neplatna hodnota (mimo rozsah
+    /// typu) znamena, ze se nezapise zadna bunka a vrati se false.
+    /// </summary>
+    private async Task<bool> WriteControlMatrixElementsEngValueAsync(IVariableBase variable,
+	    IReadOnlyList<MatrixElementWrite> elements)
+    {
+	    var protocolVariable = ResolveProtocolVariable(variable);
+	    if (protocolVariable == null
+	        || CanWriteProtocolVariable?.Invoke(protocolVariable) != true
+	        || protocolVariable.Variable is not MatrixVariable matrixVariable
+	        || elements.Count == 0)
+	    {
+		    return false;
+	    }
+
+	    foreach (var element in elements)
+	    {
+		    if (element.Index < 0 || element.Index >= matrixVariable.GetSectionCount(element.Kind)
+		        || double.IsNaN(element.EngValue))
+		    {
+			    return false;
+		    }
+	    }
+
+	    foreach (var element in elements)
+	    {
+		    if (!matrixVariable.TrySetEngValue(element.Kind, element.Index, element.EngValue))
+		    {
+			    return false;
+		    }
+
+		    var elementSize = matrixVariable.GetElementSize(element.Kind);
+		    var byteOffset = matrixVariable.GetSectionOffset(element.Kind) + element.Index * elementSize;
+		    var bytes = matrixVariable.RawData.AsSpan(byteOffset, elementSize).ToArray();
+		    matrixVariable.EnqueuePendingWrite(new MatrixWriteRequest(byteOffset, bytes));
+	    }
 
 	    await NotifyOperatorWriteAsync(protocolVariable);
 	    return true;
@@ -1056,6 +1107,15 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 		    VariableDragAndDropBehavior.IsOverValidTarget = false;
 		    e.Handled = true;
 		    return;
+	    }
+
+	    // A workspace added in edit mode gets the protocol variables only at the next runtime start
+	    // (BindLoadedControlVariables); until then the dropped variable is unknown here and the
+	    // read / write capability of the control stays false (no Read button, no Write Mode -
+	    // Radek 2026-09-27). Remember it so the providers can resolve it right away.
+	    if (!activeProtocolVariables.Contains(protocolVariable))
+	    {
+		    activeProtocolVariables.Add(protocolVariable);
 	    }
 
 	    // Bind first (single-variable controls replace, multi-variable add), then make the host-owned

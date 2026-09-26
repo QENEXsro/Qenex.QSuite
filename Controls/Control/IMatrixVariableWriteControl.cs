@@ -16,4 +16,16 @@ public interface IMatrixVariableWriteControl : IVariableWriteControl
     /// zarizeni (inverzni konverze, fronta zapisu a notifikace command driveru na strane hosta).
     /// </summary>
     Func<IVariableBase, MatrixSectionKind, int, double, Task<bool>>? WriteMatrixElementEngValueAsync { get; set; }
+
+    /// <summary>
+    /// Host injektuje: zapise vice prvku matice najednou - vsechny do fronty zapisu proměnné a
+    /// JEDNA notifikace protokolu, ktery sousedni prvky slouci do oken (XCP: SET_MTA + DOWNLOAD
+    /// blok na okno; radek 64 bunek = 1 prenos misto 64). Tlacitko Write posila takto vsechny
+    /// rozeditovane bunky; Write on Enter zapisuje jednu bunku pres WriteMatrixElementEngValueAsync.
+    /// Vraci false, kdyz se davka nezapsala (zadny prvek se pak nepovazuje za zapsany).
+    /// </summary>
+    Func<IVariableBase, IReadOnlyList<MatrixElementWrite>, Task<bool>>? WriteMatrixElementsEngValueAsync { get; set; }
 }
+
+/// <summary>One element of a batch matrix write: section, index in the section, engineering value.</summary>
+public sealed record MatrixElementWrite(MatrixSectionKind Kind, int Index, double EngValue);

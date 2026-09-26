@@ -5,6 +5,7 @@ using Qenex.QLibs.QUI;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Reflection;
+using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.Protocols.Protocol;
 using Qenex.QSuite.Specifications.Specification;
 using Qenex.QSuite.Variables.QVariables;
@@ -102,6 +103,10 @@ public abstract class ControlBase : PropertyChangedBaseWithValidation, IControlB
 		get;
 		set { field = value; OnPropertyChanged(); }
 	}
+
+	/// <summary>Application log injected by the host after creation (see IControlBase.Logger).</summary>
+	[IgnoreDataMember]
+	public ILogger? Logger { get; set; }
 	
 	[DataMember]
 	public bool IsRun

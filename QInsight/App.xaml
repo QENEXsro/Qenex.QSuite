@@ -14,6 +14,8 @@
 				<ResourceDictionary Source="pack://application:,,,/Telerik.Windows.Themes.Windows11;component/Themes/Telerik.Windows.Controls.xaml" />
 				<ResourceDictionary Source="pack://application:,,,/Telerik.Windows.Themes.Windows11;component/Themes/Telerik.Windows.Controls.chart.xaml" />
 				<ResourceDictionary Source="pack://application:,,,/Telerik.Windows.Themes.Windows11;component/Themes/Telerik.Windows.Controls.GridView.xaml" />
+				<!-- RadComboBox & co. live in Telerik.Windows.Controls.Input: without this dictionary they have no template (invisible) -->
+				<ResourceDictionary Source="pack://application:,,,/Telerik.Windows.Themes.Windows11;component/Themes/Telerik.Windows.Controls.Input.xaml" />
 				<ResourceDictionary Source="pack://application:,,,/Telerik.Windows.Themes.Windows11;component/Themes/Telerik.Windows.Controls.Diagrams.xaml" />
 				<ResourceDictionary Source="pack://application:,,,/Telerik.Windows.Themes.Windows11;component/Themes/Telerik.Windows.Controls.Diagrams.Extensions.xaml" />
 				<ResourceDictionary Source="pack://application:,,,/Telerik.Windows.Themes.Windows11;component/Themes/Telerik.Windows.Controls.Navigation.xaml" />
