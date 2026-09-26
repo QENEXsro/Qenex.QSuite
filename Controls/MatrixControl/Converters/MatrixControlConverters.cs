@@ -25,25 +25,6 @@ public class InverseBoolConverter : IValueConverter
         => value is not true;
 }
 
-/// <summary>Color (theme colour of the control) -> frozen SolidColorBrush (separator lines of the axes).</summary>
-public class ColorToBrushConverter : IValueConverter
-{
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is not Color color)
-        {
-            return DependencyProperty.UnsetValue;
-        }
-
-        var brush = new SolidColorBrush(color);
-        brush.Freeze();
-        return brush;
-    }
-
-    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => throw new NotSupportedException();
-}
-
 /// <summary>Prazdny/null text -> Collapsed (popisky os se zobrazuji jen kdyz existuji).</summary>
 public class EmptyToCollapsedConverter : IValueConverter
 {

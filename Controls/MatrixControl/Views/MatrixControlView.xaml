@@ -28,9 +28,18 @@
 			     so the templates reach it through the GridViewCell.Value of their cell. Display =
 			     TextBlock inside the Telerik cell (text colour from the theme, as in WatchTable);
 			     a text box exists only for the one cell being edited (CellEditTemplate). -->
+			<!-- The X axis row draws the separator towards the data itself (2 px line at the cell
+			     bottom, text colour of the loaded palette): cell / row borders from the styles are not
+			     rendered by the host, content is (2026-09-26). The Y axis is a frozen column: the grid
+			     draws its splitter. -->
 			<DataTemplate x:Key="MatrixCellTemplate">
-				<TextBlock Text="{Binding Value.DisplayText, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}}"
-				           TextAlignment="Right" VerticalAlignment="Center"/>
+				<Grid>
+					<TextBlock Text="{Binding Value.DisplayText, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}}"
+					           TextAlignment="Right" VerticalAlignment="Center" Margin="3,0,3,2"/>
+					<Rectangle Height="2" VerticalAlignment="Bottom" Margin="-4,0,-4,-2"
+					           Fill="{telerik:Windows11Resource ResourceKey=PrimaryForegroundBrush}"
+					           Visibility="{Binding Value.IsXAxisRow, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}, Converter={StaticResource TrueToVisible}}"/>
+				</Grid>
 			</DataTemplate>
 			<!-- Zadny lokalni Style: prebil by implicitni theme styl QTextBoxu (barvy tematu). -->
 			<DataTemplate x:Key="MatrixCellEditTemplate">
@@ -42,36 +51,14 @@
 				            ToolTip="Engineering value; Enter writes it (Write on Enter) or the Write button sends it; Tab = next cell"/>
 			</DataTemplate>
 			<!-- Cell background from the view model (write error > dirty > read error > write mode >
-			     colour scale > theme). No gaps between cells; the X axis row and the Y axis column
-			     carry a separator line with a gap towards the data (Radek 2026-09-26).
-			     Telerik lightweight ("core") templates of row and cell: 8 instead of 13 visuals per
-			     cell, a quarter less time to show a 64x64 map (probe 2026-09-26). -->
+			     colour scale > theme). Telerik lightweight ("core") templates of row and cell: 8 instead
+			     of 13 visuals per cell, a quarter less time to show a 64x64 map (probe 2026-09-26). -->
 			<!-- Row keeps the theme background: the Windows11 grid lines are the row background showing
 			     between the cells, a transparent row loses them (2026-09-26). -->
 			<Style x:Key="MatrixRowStyle" TargetType="telerik:GridViewRow" BasedOn="{StaticResource GridViewRowCoreStyle}"/>
 			<Style x:Key="MatrixCellStyle" TargetType="telerik:GridViewCell" BasedOn="{StaticResource GridViewCellCoreStyle}">
-				<Setter Property="Padding" Value="3,1"/>
+				<Setter Property="Padding" Value="2,1"/>
 				<Setter Property="Background" Value="{Binding Value.Background, RelativeSource={RelativeSource Self}}"/>
-				<Style.Triggers>
-					<!-- Separator line (2 px) between the axes and the data in the text colour of the Telerik
-					     Windows11 palette (the dark / light preset the host loads from the settings; the
-					     same colour the cell texts have) -->
-					<DataTrigger Binding="{Binding Value.Kind, RelativeSource={RelativeSource Self}}" Value="XAxis">
-						<Setter Property="BorderBrush" Value="{telerik:Windows11Resource ResourceKey=PrimaryForegroundBrush}"/>
-						<Setter Property="BorderThickness" Value="0,0,0,2"/>
-						<Setter Property="Padding" Value="3,1,3,4"/>
-					</DataTrigger>
-					<DataTrigger Binding="{Binding Value.Kind, RelativeSource={RelativeSource Self}}" Value="YAxis">
-						<Setter Property="BorderBrush" Value="{telerik:Windows11Resource ResourceKey=PrimaryForegroundBrush}"/>
-						<Setter Property="BorderThickness" Value="0,0,2,0"/>
-						<Setter Property="Padding" Value="3,1,6,1"/>
-					</DataTrigger>
-					<DataTrigger Binding="{Binding Value.IsPlaceholder, RelativeSource={RelativeSource Self}}" Value="True">
-						<Setter Property="BorderBrush" Value="{telerik:Windows11Resource ResourceKey=PrimaryForegroundBrush}"/>
-						<Setter Property="BorderThickness" Value="0,0,2,2"/>
-						<Setter Property="Padding" Value="3,1,6,4"/>
-					</DataTrigger>
-				</Style.Triggers>
 			</Style>
 		</ResourceDictionary>
 	</UserControl.Resources>
@@ -220,6 +207,7 @@
 			                     behaviors:MatrixGridBehavior.IsEnabled="True"
 			                     ItemsSource="{Binding Rows}"
 			                     RowStyle="{StaticResource MatrixRowStyle}"
+			                     FrozenColumnCount="{Binding FrozenColumnCount}"
 			                     IsReadOnly="{Binding IsWriteActive, Converter={StaticResource InverseBool}}"
 			                     AutoGenerateColumns="False"
 			                     ShowColumnHeaders="False"

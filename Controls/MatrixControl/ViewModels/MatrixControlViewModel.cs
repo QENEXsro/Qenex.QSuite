@@ -60,12 +60,19 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
             field = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ColumnCount));
+            OnPropertyChanged(nameof(FrozenColumnCount));
         }
     } = [];
 
     /// <summary>Number of table columns (Y axis column + X count, or the data count of a value block).</summary>
     [IgnoreDataMember]
     public int ColumnCount => Rows.Count > 0 ? Rows[0].Count : 0;
+
+    /// <summary>The Y axis column is frozen: the grid draws its splitter as the separator from the
+    /// data and the axis stays visible while the map is scrolled horizontally.</summary>
+    [IgnoreDataMember]
+    public int FrozenColumnCount => Rows.Count > 0 && Rows[0].Count > 0 && Rows[0][0].Kind == MatrixSectionKind.YAxis ||
+                                    Rows.Count > 0 && Rows[0].Count > 0 && Rows[0][0].IsPlaceholder ? 1 : 0;
 
     [IgnoreDataMember]
     private List<MatrixCellViewModel> allCells = [];
