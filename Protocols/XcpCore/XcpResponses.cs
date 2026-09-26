@@ -8,11 +8,28 @@ public sealed record XcpConnectResponse(
     byte MaxCto,
     ushort MaxDto,
     byte ProtocolLayerVersion,
-    byte TransportLayerVersion)
+    byte TransportLayerVersion,
+    bool SupportsSlaveBlockMode = false,
+    bool HasOptionalCommModeInfo = false)
 {
     public bool SupportsCalibration => (Resource & XcpResource.Calibration) != 0;
     public bool SupportsDaq => (Resource & XcpResource.Daq) != 0;
     public bool SupportsStim => (Resource & XcpResource.Stim) != 0;
+}
+
+/// <summary>Parsed GET_COMM_MODE_INFO positive response (ASAM XCP 1.1 Part 2, section 1.6.1.1.4):
+/// the slave's optional communication modes. MAX_BS = maximum number of consecutive command
+/// packets in a master block mode block, MIN_ST = minimum separation time between them in units
+/// of 100 µs, QUEUE_SIZE = depth of the slave's command queue (informative).</summary>
+public sealed record XcpCommModeInfo(
+    byte CommModeOptional,
+    byte MaxBs,
+    byte MinSt,
+    byte QueueSize,
+    byte DriverVersion)
+{
+    public bool SupportsMasterBlockMode => (CommModeOptional & 0x01) != 0;
+    public bool SupportsInterleavedMode => (CommModeOptional & 0x02) != 0;
 }
 
 /// <summary>Parsed GET_STATUS positive response (ASAM XCP 1.1 Part 2, section 1.6.1.1.3).</summary>

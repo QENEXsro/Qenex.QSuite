@@ -7,10 +7,13 @@ public static class XcpCommand
     public const byte Disconnect = 0xFE;
     public const byte GetStatus = 0xFD;
     public const byte Synch = 0xFC;
+    public const byte GetCommModeInfo = 0xFB;
     public const byte SetMta = 0xF6;
     public const byte Upload = 0xF5;
     public const byte ShortUpload = 0xF4;
     public const byte Download = 0xF0;
+    /// <summary>Master block mode continuation of a DOWNLOAD (ASAM XCP 1.1 Part 2, 1.6.1.2.3).</summary>
+    public const byte DownloadNext = 0xEF;
 
     // DAQ commands (ASAM XCP 1.1 Part 2, section 1.5.3).
     public const byte SetDaqPtr = 0xE2;
