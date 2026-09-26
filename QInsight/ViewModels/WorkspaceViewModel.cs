@@ -1109,6 +1109,15 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 		    return;
 	    }
 
+	    // A workspace added in edit mode gets the protocol variables only at the next runtime start
+	    // (BindLoadedControlVariables); until then the dropped variable is unknown here and the
+	    // read / write capability of the control stays false (no Read button, no Write Mode -
+	    // Radek 2026-09-27). Remember it so the providers can resolve it right away.
+	    if (!activeProtocolVariables.Contains(protocolVariable))
+	    {
+		    activeProtocolVariables.Add(protocolVariable);
+	    }
+
 	    // Bind first (single-variable controls replace, multi-variable add), then make the host-owned
 	    // subscriptions match: drop the ones the control no longer holds, subscribe the dropped one.
 	    control.BindVariable(protocolVariable.Variable);
