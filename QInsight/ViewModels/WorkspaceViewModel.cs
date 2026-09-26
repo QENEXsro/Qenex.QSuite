@@ -330,6 +330,7 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 		    if (writeControl is IMatrixVariableWriteControl matrixWriteControl)
 		    {
 			    matrixWriteControl.WriteMatrixElementEngValueAsync = WriteControlMatrixElementEngValueAsync;
+			    matrixWriteControl.WriteMatrixElementsEngValueAsync = WriteControlMatrixElementsEngValueAsync;
 		    }
 
 		    writeControl.RefreshWriteCapability();
@@ -440,6 +441,50 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 	    var byteOffset = matrixVariable.GetSectionOffset(kind) + index * elementSize;
 	    var bytes = matrixVariable.RawData.AsSpan(byteOffset, elementSize).ToArray();
 	    matrixVariable.EnqueuePendingWrite(new MatrixWriteRequest(byteOffset, bytes));
+
+	    await NotifyOperatorWriteAsync(protocolVariable);
+	    return true;
+    }
+
+    /// <summary>
+    /// Zapis vice bunek matice najednou (tlacitko Write): vsechny hodnoty do raw bufferu a do
+    /// fronty zapisu, potom JEDNA notifikace - protokol si sousedni bunky slouci do oken
+    /// (XCP: radek 64 bunek = jeden DOWNLOAD blok). Vse nebo nic: neplatna hodnota (mimo rozsah
+    /// typu) znamena, ze se nezapise zadna bunka a vrati se false.
+    /// </summary>
+    private async Task<bool> WriteControlMatrixElementsEngValueAsync(IVariableBase variable,
+	    IReadOnlyList<MatrixElementWrite> elements)
+    {
+	    var protocolVariable = ResolveProtocolVariable(variable);
+	    if (protocolVariable == null
+	        || CanWriteProtocolVariable?.Invoke(protocolVariable) != true
+	        || protocolVariable.Variable is not MatrixVariable matrixVariable
+	        || elements.Count == 0)
+	    {
+		    return false;
+	    }
+
+	    foreach (var element in elements)
+	    {
+		    if (element.Index < 0 || element.Index >= matrixVariable.GetSectionCount(element.Kind)
+		        || double.IsNaN(element.EngValue))
+		    {
+			    return false;
+		    }
+	    }
+
+	    foreach (var element in elements)
+	    {
+		    if (!matrixVariable.TrySetEngValue(element.Kind, element.Index, element.EngValue))
+		    {
+			    return false;
+		    }
+
+		    var elementSize = matrixVariable.GetElementSize(element.Kind);
+		    var byteOffset = matrixVariable.GetSectionOffset(element.Kind) + element.Index * elementSize;
+		    var bytes = matrixVariable.RawData.AsSpan(byteOffset, elementSize).ToArray();
+		    matrixVariable.EnqueuePendingWrite(new MatrixWriteRequest(byteOffset, bytes));
+	    }
 
 	    await NotifyOperatorWriteAsync(protocolVariable);
 	    return true;

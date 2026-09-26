@@ -1535,8 +1535,7 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
             // the same way the STIM stream does.
             var bytes = session.Codec.EncodeValue(scalarVariable.GetValue(), spec.DataType);
             await session.WriteMemoryAsync(spec.AddressExtension, spec.Address, bytes, ct);
-            Logger?.Log(LogLevel.Info,
-                $"XCP: wrote '{scalarVariable.Name}' ({bytes.Length} B at 0x{spec.Address:X}).");
+            // A successful write is not logged (Radek 2026-09-27); failures below are.
         }
         catch (OperationCanceledException)
         {
@@ -1586,8 +1585,7 @@ public abstract class XcpProtocolBase<TFrame> : ProtocolBase<TFrame>, ITransport
             {
                 var bytes = matrix.RawData.AsSpan(offset, length).ToArray();
                 await session.WriteMemoryAsync(spec.AddressExtension, spec.Address + (uint)offset, bytes, ct);
-                Logger?.Log(LogLevel.Info,
-                    $"XCP: wrote {length} B of '{matrix.Name}' at 0x{spec.Address + (uint)offset:X} (byte offset {offset}).");
+                // A successful write is not logged (Radek 2026-09-27); failures below are.
             }
             catch (OperationCanceledException)
             {

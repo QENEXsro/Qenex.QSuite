@@ -248,6 +248,9 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
     [IgnoreDataMember]
     public Func<IVariableBase, MatrixSectionKind, int, double, Task<bool>>? WriteMatrixElementEngValueAsync { get; set; }
 
+    [IgnoreDataMember]
+    public Func<IVariableBase, IReadOnlyList<MatrixElementWrite>, Task<bool>>? WriteMatrixElementsEngValueAsync { get; set; }
+
     [DataMember]
     public bool IsWriteMode
     {
@@ -463,18 +466,81 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         // Without Write on Enter the edit already marked the cell dirty; the Write button sends it.
     }
 
+    /// <summary>
+    /// Write button: all dirty cells in ONE batch (the protocol merges neighbouring cells into
+    /// windows - a pasted row is one transfer, not one per cell). Cells whose text is not a
+    /// number are marked as errors and left out. When the batch fails, every cell of it stays
+    /// dirty and is marked red so Write can be repeated. Without a batch delegate (older host)
+    /// the cells are written one by one.
+    /// </summary>
     private async Task WriteDirtyCellsAsync()
     {
-        foreach (var cell in allCells.Where(c => c.IsDirty).ToList())
+        var dirty = allCells.Where(c => c.IsDirty).ToList();
+        if (dirty.Count == 0 || !IsWriteActive || !IsRun)
         {
-            // Leaving write mode (or the runtime) while a long write runs cancels the rest
-            // silently: the pending edits were discarded, they are no errors.
-            if (!IsWriteActive || !IsRun)
+            return;
+        }
+
+        if (WriteMatrixElementsEngValueAsync == null || Variables?.FirstOrDefault() is not MatrixVariable matrixVariable)
+        {
+            foreach (var cell in dirty)
             {
-                return;
+                // Leaving write mode (or the runtime) while a long write runs cancels the rest
+                // silently: the pending edits were discarded, they are no errors.
+                if (!IsWriteActive || !IsRun)
+                {
+                    return;
+                }
+
+                await WriteCellAsync(cell);
             }
 
-            await WriteCellAsync(cell);
+            return;
+        }
+
+        var batch = new List<(MatrixCellViewModel cell, double engValue)>();
+        foreach (var cell in dirty)
+        {
+            if (TryParseEngValue(cell.EditText, out var engValue))
+            {
+                batch.Add((cell, engValue));
+            }
+            else
+            {
+                cell.IsWriteError = true;
+            }
+        }
+
+        if (batch.Count == 0)
+        {
+            return;
+        }
+
+        bool written;
+        try
+        {
+            written = await WriteMatrixElementsEngValueAsync(matrixVariable,
+                batch.Select(b => new MatrixElementWrite(b.cell.Kind, b.cell.Index, b.engValue)).ToList());
+        }
+        catch
+        {
+            written = false;
+        }
+
+        foreach (var (cell, engValue) in batch)
+        {
+            if (written)
+            {
+                // The display text is NOT touched: it shows the last value read from the device and
+                // the written one appears only once the device returns it (poll / Read).
+                cell.IsWriteError = false;
+                cell.IsDirty = false;
+                cell.SetEditTextSilently(engValue.ToString(CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                cell.IsWriteError = true;
+            }
         }
     }
 
