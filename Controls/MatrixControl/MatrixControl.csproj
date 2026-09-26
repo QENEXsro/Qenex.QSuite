@@ -26,6 +26,8 @@
       <PackageReference Include="Qenex.QLibs.QUI" Version="1.0.10" />
       <PackageReference Include="Telerik.Windows.Controls.for.Wpf" Version="2026.1.415" />
       <PackageReference Include="Telerik.Windows.Controls.Navigation.for.Wpf" Version="2026.1.415" />
+      <PackageReference Include="Telerik.Windows.Controls.GridView.for.Wpf" Version="2026.1.415" />
+      <PackageReference Include="Telerik.Windows.Data.for.Wpf" Version="2026.1.415" />
     </ItemGroup>
 
     <ItemGroup>

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.Serialization;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Qenex.QLibs.QUI;
 using Qenex.QSuite.Common.WpfComm;
@@ -10,13 +11,17 @@ using Qenex.QSuite.Variables.QVariables;
 namespace Qenex.QSuite.Controls.MatrixControl.ViewModels;
 
 /// <summary>
-/// Table view of a MatrixVariable (value block / curve / map): X axis breakpoints as the column
-/// header, Y axis breakpoints as the row header, data cells row-major. Read/write behaviour is
+/// Table view of a MatrixVariable (value block / curve / map): X axis breakpoints as the first
+/// row, Y axis breakpoints as the first column, data cells row-major. Read/write behaviour is
 /// the same as in the Single-Signal and Watch Table controls: the table shows only values read
 /// from the device (periodic event: every poll; On Request event: the Read button). Write mode
 /// freezes the display and makes the cells editable: with Write on Enter ticked, Enter writes the
 /// cell immediately; otherwise edits accumulate as dirty cells until the Write button sends them.
 /// A written value shows up only once the device returns it (next poll / next Read).
+/// The view is a virtualised RadGridView (rows = <see cref="Rows"/>, one column per table
+/// column bound to Cells[i]), so a 64x64 map costs no more UI than the visible cells. Clipboard:
+/// copy is native (cell ToString = shown text), paste comes in as <see cref="MatrixPasteRequest"/>.
+/// Optional colour scale (min/max/spectrum) tints the data cells by their engineering value.
 /// </summary>
 [DataContract]
 public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, IVariableReadControl
@@ -47,11 +52,20 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
 
     /// <summary>Rows of the table, first row is the X axis header when the matrix has one.</summary>
     [IgnoreDataMember]
-    public IReadOnlyList<IReadOnlyList<MatrixCellViewModel>> Rows
+    public IReadOnlyList<MatrixRowViewModel> Rows
     {
         get;
-        private set { field = value; OnPropertyChanged(); }
+        private set
+        {
+            field = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ColumnCount));
+        }
     } = [];
+
+    /// <summary>Number of table columns (Y axis column + X count, or the data count of a value block).</summary>
+    [IgnoreDataMember]
+    public int ColumnCount => Rows.Count > 0 ? Rows[0].Count : 0;
 
     [IgnoreDataMember]
     private List<MatrixCellViewModel> allCells = [];
@@ -100,6 +114,116 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
 
     #endregion
 
+    #region Colour scale (heat map)
+
+    /// <summary>Tint the data cells by value between <see cref="HeatMinimum"/> and <see cref="HeatMaximum"/>.</summary>
+    [DataMember]
+    public bool IsHeatmapEnabled
+    {
+        get;
+        set
+        {
+            field = value;
+            OnPropertyChanged();
+            RefreshAllBackgrounds();
+        }
+    }
+
+    [DataMember]
+    public double HeatMinimum
+    {
+        get;
+        set
+        {
+            field = value;
+            OnPropertyChanged();
+            RefreshAllBackgrounds();
+        }
+    }
+
+    [DataMember]
+    public double HeatMaximum
+    {
+        get;
+        set
+        {
+            field = value;
+            OnPropertyChanged();
+            RefreshAllBackgrounds();
+        }
+    } = 100;
+
+    [DataMember]
+    public MatrixSpectrum HeatSpectrum
+    {
+        get;
+        set
+        {
+            field = value;
+            OnPropertyChanged();
+            RefreshAllBackgrounds();
+        }
+    }
+
+    [IgnoreDataMember]
+    public IReadOnlyList<MatrixSpectrum> Spectrums { get; } = Enum.GetValues<MatrixSpectrum>();
+
+    /// <summary>
+    /// Background of a cell: write error > dirty > failed read > write mode > colour scale > none.
+    /// One place for the whole table so the view only binds the resulting brush.
+    /// </summary>
+    internal Brush GetCellBackground(MatrixCellViewModel cell)
+    {
+        if (cell.IsPlaceholder)
+        {
+            return MatrixCellBrushes.None;
+        }
+
+        if (cell.IsWriteError)
+        {
+            return MatrixCellBrushes.Error;
+        }
+
+        if (cell.IsDirty)
+        {
+            return MatrixCellBrushes.Dirty;
+        }
+
+        if (IsWriteActive)
+        {
+            return MatrixCellBrushes.WriteMode;
+        }
+
+        if (IsReadError)
+        {
+            return MatrixCellBrushes.Error;
+        }
+
+        if (IsHeatmapEnabled && cell.Kind == MatrixSectionKind.Data && cell.HeatValue is { } value)
+        {
+            var span = HeatMaximum - HeatMinimum;
+            return MatrixCellBrushes.Heat(HeatSpectrum, span > 0 ? (value - HeatMinimum) / span : 0.5);
+        }
+
+        return MatrixCellBrushes.None;
+    }
+
+    private void RefreshAllBackgrounds()
+    {
+        // allCells is null while the DataContractSerializer sets the members (no constructor).
+        if (allCells == null)
+        {
+            return;
+        }
+
+        foreach (var cell in allCells)
+        {
+            cell.RefreshBackground();
+        }
+    }
+
+    #endregion
+
     #region Write mode (IMatrixVariableWriteControl)
 
     [IgnoreDataMember]
@@ -120,7 +244,6 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         {
             field = value;
             OnPropertyChanged();
-            NotifyWriteStateChanged();
             if (value)
             {
                 PrefillEditTexts();
@@ -132,6 +255,8 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
                 // once the device returns it - next poll, or next Read for an On Request matrix.
                 ClearPendingEdits();
             }
+
+            NotifyWriteStateChanged();
         }
     }
 
@@ -169,6 +294,16 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
     [IgnoreDataMember]
     public RelayCommand<object> WriteDirtyCommand => field ??= new RelayCommand<object>(_ => _ = WriteDirtyCellsAsync());
 
+    /// <summary>Clipboard paste (Ctrl+V / Shift+Insert in the grid): parameter <see cref="MatrixPasteRequest"/>.</summary>
+    [IgnoreDataMember]
+    public RelayCommand<object> PasteCommand => field ??= new RelayCommand<object>(p =>
+    {
+        if (p is MatrixPasteRequest request)
+        {
+            Paste(request);
+        }
+    });
+
     public void RefreshWriteCapability()
     {
         var variable = Variables?.FirstOrDefault();
@@ -180,6 +315,18 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         OnPropertyChanged(nameof(IsWriteActive));
         OnPropertyChanged(nameof(IsWriteButtonVisible));
         OnPropertyChanged(nameof(CanWriteDirty));
+
+        // The table shows the edit texts in write mode and the read values otherwise; the
+        // backgrounds switch to the orange write tint (or back to the colour scale).
+        if (allCells == null)
+        {
+            return;
+        }
+
+        foreach (var cell in allCells)
+        {
+            cell.NotifyWriteModeChanged();
+        }
     }
 
     #endregion
@@ -227,7 +374,21 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
     /// <summary>Last on-request read failed (timeout, device error, not running): red tint of the
     /// Read button and of the value cells, cleared by the next successful read or bus update.</summary>
     [IgnoreDataMember]
-    public bool IsReadError { get; private set { field = value; OnPropertyChanged(); } }
+    public bool IsReadError
+    {
+        get;
+        private set
+        {
+            if (field == value)
+            {
+                return;
+            }
+
+            field = value;
+            OnPropertyChanged();
+            RefreshAllBackgrounds();
+        }
+    }
 
     // Lazy kvuli deserializaci (DataContractSerializer nevola konstruktor)
     [IgnoreDataMember]
@@ -339,10 +500,70 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
             NumberStyles.Float, CultureInfo.InvariantCulture, out engValue);
     }
 
+    /// <summary>
+    /// Paste from the clipboard (Excel format: cells separated by tabs, rows by line breaks)
+    /// starting at the top-left cell of the selection; only in write mode. Every pasted text
+    /// becomes the edit text of its cell and marks it dirty when it differs (the Write button /
+    /// Enter then sends it). A single value pasted into a multi-cell selection fills the
+    /// selection. Cells outside the table and the map corner are skipped; empty cells are kept.
+    /// </summary>
+    internal void Paste(MatrixPasteRequest request)
+    {
+        if (!IsWriteActive || string.IsNullOrEmpty(request.Text) || request.Row < 0 || request.Column < 0)
+        {
+            return;
+        }
+
+        var lines = request.Text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n').ToList();
+        while (lines.Count > 0 && lines[^1].Length == 0)
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
+        if (lines.Count == 0)
+        {
+            return;
+        }
+
+        var block = lines.Select(line => line.Split('\t')).ToList();
+        var single = block.Count == 1 && block[0].Length == 1;
+        var rowCount = single ? Math.Max(1, request.RowCount) : block.Count;
+        var columnCount = single ? Math.Max(1, request.ColumnCount) : block.Max(r => r.Length);
+
+        for (var i = 0; i < rowCount; i++)
+        {
+            var rowIndex = request.Row + i;
+            if (rowIndex >= Rows.Count)
+            {
+                break;
+            }
+
+            var row = Rows[rowIndex];
+            var values = single ? block[0] : block[i];
+            for (var j = 0; j < columnCount; j++)
+            {
+                var columnIndex = request.Column + j;
+                if (columnIndex >= row.Count)
+                {
+                    break;
+                }
+
+                var text = (single ? values[0] : j < values.Length ? values[j] : string.Empty).Trim();
+                var cell = row[columnIndex];
+                if (text.Length == 0 || cell.IsPlaceholder)
+                {
+                    continue;
+                }
+
+                cell.EditText = text;
+            }
+        }
+    }
+
     /// <summary>Sets the edit boxes to the variable's current values without marking them dirty.</summary>
     private void PrefillEditTexts()
     {
-        if (Variables?.FirstOrDefault() is not MatrixVariable matrixVariable)
+        if (Variables?.FirstOrDefault() is not MatrixVariable matrixVariable || allCells == null)
         {
             return;
         }
@@ -478,8 +699,10 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         {
             cell.Text = string.Empty;
             cell.SetEditTextSilently(string.Empty);
+            cell.HeatValue = null;
             cell.IsDirty = false;
             cell.IsWriteError = false;
+            cell.RefreshBackground();
         }
     }
 
@@ -499,7 +722,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
     private void RebuildGrid()
     {
         allCells = [];
-        var rows = new List<IReadOnlyList<MatrixCellViewModel>>();
+        var rows = new List<MatrixRowViewModel>();
 
         if (Variables?.FirstOrDefault() is MatrixVariable matrixVariable && matrixVariable.ValidateLayout() == null)
         {
@@ -512,28 +735,28 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
                 var headerRow = new List<MatrixCellViewModel>();
                 if (hasY)
                 {
-                    headerRow.Add(MatrixCellViewModel.Placeholder(this));
+                    headerRow.Add(MatrixCellViewModel.Placeholder(this, rows.Count, 0));
                 }
 
                 for (var x = 0; x < xCount; x++)
                 {
-                    headerRow.Add(new MatrixCellViewModel(this, MatrixSectionKind.XAxis, x));
+                    headerRow.Add(new MatrixCellViewModel(this, MatrixSectionKind.XAxis, x, rows.Count, headerRow.Count));
                 }
 
-                rows.Add(headerRow);
+                rows.Add(new MatrixRowViewModel(rows.Count, headerRow, isAxisRow: true));
             }
 
             if (hasY)
             {
                 for (var y = 0; y < matrixVariable.YCount; y++)
                 {
-                    var row = new List<MatrixCellViewModel> { new(this, MatrixSectionKind.YAxis, y) };
+                    var row = new List<MatrixCellViewModel> { new(this, MatrixSectionKind.YAxis, y, rows.Count, 0) };
                     for (var x = 0; x < xCount; x++)
                     {
-                        row.Add(new MatrixCellViewModel(this, MatrixSectionKind.Data, y * xCount + x));
+                        row.Add(new MatrixCellViewModel(this, MatrixSectionKind.Data, y * xCount + x, rows.Count, row.Count));
                     }
 
-                    rows.Add(row);
+                    rows.Add(new MatrixRowViewModel(rows.Count, row, isAxisRow: false));
                 }
             }
             else
@@ -541,13 +764,13 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
                 var row = new List<MatrixCellViewModel>();
                 for (var i = 0; i < matrixVariable.DataCount; i++)
                 {
-                    row.Add(new MatrixCellViewModel(this, MatrixSectionKind.Data, i));
+                    row.Add(new MatrixCellViewModel(this, MatrixSectionKind.Data, i, rows.Count, i));
                 }
 
-                rows.Add(row);
+                rows.Add(new MatrixRowViewModel(rows.Count, row, isAxisRow: false));
             }
 
-            allCells = rows.SelectMany(r => r).Where(c => !c.IsPlaceholder).ToList();
+            allCells = rows.SelectMany(r => r.Cells).Where(c => !c.IsPlaceholder).ToList();
         }
 
         Rows = rows;
@@ -578,7 +801,7 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         }
     }
 
-    /// <summary>Applies the values of a (snapshot) variable to the display texts.</summary>
+    /// <summary>Applies the values of a (snapshot) variable to the display texts and the colour scale.</summary>
     private void ApplyVariable(MatrixVariable matrixVariable)
     {
         if (!IsGridShapeCurrent(matrixVariable))
@@ -589,6 +812,15 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         foreach (var cell in allCells)
         {
             cell.Text = matrixVariable.GetPresentationText(cell.Kind, cell.Index);
+            if (cell.Kind == MatrixSectionKind.Data)
+            {
+                cell.HeatValue = matrixVariable.GetEngValue(cell.Kind, cell.Index);
+            }
+
+            if (IsHeatmapEnabled)
+            {
+                cell.RefreshBackground();
+            }
         }
     }
 
@@ -616,5 +848,10 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         LinkedVariables ??= [];
         Rows ??= [];
         allCells ??= [];
+        if (HeatMaximum == 0 && HeatMinimum == 0)
+        {
+            // Project saved before the colour scale existed: keep the defaults of a new control.
+            HeatMaximum = 100;
+        }
     }
 }
