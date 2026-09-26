@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using Qenex.QLibs.QUI;
 using Qenex.QSuite.Common.WpfComm;
 using Qenex.QSuite.Controls.Control;
+using Qenex.QSuite.LogSystems.LogSystem;
 using Qenex.QSuite.Variables.QVariables;
 
 namespace Qenex.QSuite.Controls.MatrixControl.ViewModels;
@@ -523,6 +524,11 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
             field = value ?? string.Empty;
             OnPropertyChanged();
             OnPropertyChanged(nameof(HasPasteMessage));
+            if (field.Length > 0)
+            {
+                // Same message into the application log (host-injected ILogger, Calibro pattern)
+                Logger?.Log(LogLevel.Warn, $"Matrix '{VariableLabel}': {field}");
+            }
         }
     } = string.Empty;
 

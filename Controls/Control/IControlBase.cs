@@ -1,4 +1,5 @@
-﻿using System.Collections.ObjectModel;
+﻿using Qenex.QSuite.LogSystems.LogSystem;
+using System.Collections.ObjectModel;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Qenex.QSuite.Protocols.Protocol;
@@ -96,6 +97,13 @@ public interface IControlBase : IComponentSpecification
 	/// Font size of the control.
 	/// </summary>
 	int FontSize { get; set; }
+
+	/// <summary>
+	/// Application log (the same ILogger the module, drivers and protocols get). Set by the host
+	/// after the control is created - controls are created dynamically with a parameterless
+	/// constructor, never through it. Null = silent.
+	/// </summary>
+	ILogger? Logger { get; set; }
 	
 	/// <summary>
 	/// Indicates whether the control is locked for editing (moving, resizing, etc.).

@@ -1397,7 +1397,8 @@ public partial class ShellWindowModel
                 GetInitialDialogDirectory(lastGraphExportDialogDirectory, currentProjectFilePath),
             GraphControlSaveDialogDirectoryChanged = directory => lastGraphExportDialogDirectory = directory,
             CanWriteProtocolVariable = CanWriteProtocolVariable,
-            CanReadProtocolVariable = CanReadProtocolVariable
+            CanReadProtocolVariable = CanReadProtocolVariable,
+            Logger = logger
         };
     }
 

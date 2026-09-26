@@ -97,6 +97,10 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
     /// request (On Request event). Mirror of CanWriteProtocolVariable.</summary>
     public Func<IProtocolVariable, bool>? CanReadProtocolVariable { get; set; }
 
+    /// <summary>Application log handed to every control (IControlBase.Logger), the same instance
+    /// the module, drivers and protocols log into.</summary>
+    public ILogger? Logger { get; set; }
+
     #endregion
     
     #region ViewModelBase implementation
@@ -299,6 +303,8 @@ public class WorkspaceViewModel : WorkspaceViewModelBase
 
     private void ConfigureControl(IControlBase controlVm)
     {
+	    controlVm.Logger = Logger;
+
 	    if (controlVm is ILogAwareControl logAwareControl && controlVm is ControlBase logControlBase)
 	    {
 		    logAwareControl.LogInfo = message =>
