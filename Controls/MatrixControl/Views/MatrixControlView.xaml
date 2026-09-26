@@ -132,7 +132,7 @@
 					     on the text box line, not below and to the right of it. -->
 					<q:QTextBlock Grid.Column="2" Grid.Row="0" Text="Color scale:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
 					<CheckBox Grid.Column="3" Grid.Row="0" IsChecked="{Binding IsHeatmapEnabled, Mode=TwoWay}"
-					          Margin="8,3,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Height="20"
+					          Margin="8,3,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
 					          MinHeight="0" MinWidth="0" Padding="0"
 					          ToolTip="Tint the data cells by value between Min and Max"/>
 

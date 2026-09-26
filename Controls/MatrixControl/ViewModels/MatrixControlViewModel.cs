@@ -165,8 +165,12 @@ public class MatrixControlViewModel : ControlBase, IMatrixVariableWriteControl, 
         }
     }
 
+    // Static: the DataContractSerializer does not run the constructor / field initialisers, so an
+    // instance initialiser would leave the combo box of a loaded project without items.
+    private static readonly MatrixSpectrum[] AllSpectrums = Enum.GetValues<MatrixSpectrum>();
+
     [IgnoreDataMember]
-    public IReadOnlyList<MatrixSpectrum> Spectrums { get; } = Enum.GetValues<MatrixSpectrum>();
+    public IReadOnlyList<MatrixSpectrum> Spectrums => AllSpectrums;
 
     /// <summary>
     /// Background of a cell: write error > dirty > failed read > write mode > colour scale > none.
