@@ -643,7 +643,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
         // Names are how components reference each other (presentation -> conversion,
         // variable -> presentation, communicated variable -> event/script), so duplicates
         // or blanks must never be applied — whether they came from a rename, copy or import.
-        var validationProblems = ValidateNamesBeforeApply();
+        var validationProblems = ValidateBeforeApply();
         if (validationProblems.Count > 0)
         {
             ReportValidationProblems(validationProblems);
@@ -1756,7 +1756,7 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
 
     private ILogger? Logger => (module as ModuleBase)?.Logger;
 
-    private List<string> ValidateNamesBeforeApply()
+    private List<string> ValidateBeforeApply()
     {
         var problems = new List<string>();
 
@@ -1771,6 +1771,13 @@ public class ProjectConfigurationViewModel : PropertyChangedBase
             .Where(group => group.Count() > 1)
             .Select(group => $"duplicate variable Id {group.Key}: "
                 + string.Join(", ", group.Select(variable => $"\"{variable.Name}\""))));
+
+        // Variable wrappers are applied after the project, drivers and protocols — a variable
+        // that cannot be applied must stop the whole apply here, not half-way through it.
+        problems.AddRange(Variables
+            .Select(variable => (variable.Name, Problem: variable.ValidateBeforeApply()))
+            .Where(result => result.Problem != null)
+            .Select(result => $"variable \"{result.Name}\": {result.Problem}"));
 
         return problems;
     }
