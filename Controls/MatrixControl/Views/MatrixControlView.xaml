@@ -7,6 +7,7 @@
              xmlns:vm="clr-namespace:Qenex.QSuite.Controls.MatrixControl.ViewModels"
              xmlns:behaviors="clr-namespace:Qenex.QSuite.Controls.MatrixControl.Behaviors"
              xmlns:telerik="http://schemas.telerik.com/2008/xaml/presentation"
+             xmlns:control="clr-namespace:Qenex.QSuite.Controls.Control;assembly=Qenex.QSuite.Controls.Control"
              xmlns:q="clr-namespace:Qenex.QSuite.Controls.OverridenWinControls;assembly=Qenex.QSuite.Controls.OverridenWinControls"
              mc:Ignorable="d"
              d:DesignHeight="180" d:DesignWidth="320"
@@ -18,6 +19,8 @@
 			<ResourceDictionary.MergedDictionaries>
 				<ResourceDictionary Source="pack://application:,,,/Qenex.QSuite.Controls.Control;component/Style/SharedStyles.xaml"/>
 			</ResourceDictionary.MergedDictionaries>
+			<!-- Tab context menu commands live on the control; the tab item's DataContext is the page -->
+			<control:BindingProxy x:Key="RootProxy" Data="{Binding}"/>
 			<BooleanToVisibilityConverter x:Key="TrueToVisible"/>
 			<conv:TrueToCollapsedConverter x:Key="TrueToCollapsed"/>
 			<conv:EmptyToCollapsedConverter x:Key="EmptyToCollapsed"/>
@@ -58,190 +61,228 @@
 			<!-- Cell background from the view model (write error > dirty > read error > write mode >
 			     colour scale > theme). Telerik lightweight ("core") templates of row and cell: 8 instead
 			     of 13 visuals per cell, a quarter less time to show a 64x64 map (probe 2026-09-26). -->
-			<!-- Row keeps the theme background: the Windows11 grid lines are the row background showing
-			     between the cells, a transparent row loses them (2026-09-26). -->
 			<Style x:Key="MatrixRowStyle" TargetType="telerik:GridViewRow" BasedOn="{StaticResource GridViewRowCoreStyle}"/>
 			<Style x:Key="MatrixCellStyle" TargetType="telerik:GridViewCell" BasedOn="{StaticResource GridViewCellCoreStyle}">
 				<Setter Property="Padding" Value="2,1"/>
 				<Setter Property="Background" Value="{Binding Value.Background, RelativeSource={RelativeSource Self}}"/>
 			</Style>
+
+			<!-- Tab header: variable label + a mark while the tab has edited cells not written yet -->
+			<DataTemplate x:Key="MatrixTabHeaderTemplate" DataType="{x:Type vm:MatrixPageViewModel}">
+				<StackPanel Orientation="Horizontal">
+					<q:QTextBlock Text="{Binding Title}" TextWrapping="NoWrap"/>
+					<q:QTextBlock Text=" *" FontWeight="Bold" ToolTip="Edited cells not written to the device yet"
+					              Visibility="{Binding IsModified, Converter={StaticResource TrueToVisible}}"/>
+				</StackPanel>
+			</DataTemplate>
+
+			<!-- Tab item: the theme style plus the tab context menu (Calibro ParamControl pattern) -->
+			<Style x:Key="MatrixTabItemStyle" TargetType="telerik:RadTabItem" BasedOn="{StaticResource RadTabItemStyle}">
+				<Setter Property="telerik:RadContextMenu.ContextMenu">
+					<Setter.Value>
+						<telerik:RadContextMenu>
+							<telerik:RadMenuItem Header="Move left" Command="{Binding Data.MovePageLeftCommand, Source={StaticResource RootProxy}}" CommandParameter="{Binding}"/>
+							<telerik:RadMenuItem Header="Move right" Command="{Binding Data.MovePageRightCommand, Source={StaticResource RootProxy}}" CommandParameter="{Binding}"/>
+							<telerik:RadMenuItem Header="Remove" Command="{Binding Data.RemovePageCommand, Source={StaticResource RootProxy}}" CommandParameter="{Binding}"/>
+						</telerik:RadContextMenu>
+					</Setter.Value>
+				</Setter>
+			</Style>
+
+			<!-- Content of one tab = one matrix: settings expander | Read | Write | label, then the table -->
+			<DataTemplate x:Key="MatrixPageTemplate" DataType="{x:Type vm:MatrixPageViewModel}">
+				<Grid>
+					<Grid.RowDefinitions>
+						<RowDefinition Height="Auto"/>
+						<RowDefinition Height="*"/>
+					</Grid.RowDefinitions>
+
+					<!-- Header: settings expander | Read | Write | variable label (same order as Single-Signal) -->
+					<Grid Grid.Row="0">
+						<Grid.ColumnDefinitions>
+							<ColumnDefinition Width="Auto"/>
+							<ColumnDefinition Width="Auto"/>
+							<ColumnDefinition Width="Auto"/>
+							<ColumnDefinition Width="*"/>
+						</Grid.ColumnDefinitions>
+
+						<!-- Settings in two column pairs (3 rows) so they fit a low control such as a curve
+						     (the expander content is clipped by the control height, Radek 2026-09-26) -->
+						<telerik:RadExpander Grid.Column="0" Style="{StaticResource SquareExpanderStyle}" HorizontalAlignment="Left">
+							<Grid Margin="5">
+								<Grid.ColumnDefinitions>
+									<ColumnDefinition Width="Auto"/>
+									<ColumnDefinition Width="Auto"/>
+									<ColumnDefinition Width="Auto"/>
+									<ColumnDefinition Width="Auto"/>
+								</Grid.ColumnDefinitions>
+								<Grid.RowDefinitions>
+									<RowDefinition Height="Auto"/>
+									<RowDefinition Height="Auto"/>
+									<RowDefinition Height="Auto"/>
+								</Grid.RowDefinitions>
+
+								<q:QTextBlock Grid.Column="0" Grid.Row="0" Text="Refresh [ms]:" Margin="0,3,0,0" HorizontalAlignment="Left"/>
+								<q:QTextBox Grid.Column="1" Grid.Row="0" Text="{Binding RefreshTime, Mode=TwoWay}"
+								            Margin="8,3,0,0" HorizontalAlignment="Left" Height="20" Width="50" VerticalAlignment="Center"/>
+
+								<q:QTextBlock Grid.Column="0" Grid.Row="1" Text="Cell width [px]:" Margin="0,3,0,0" HorizontalAlignment="Left"/>
+								<q:QTextBox Grid.Column="1" Grid.Row="1" Text="{Binding CellWidth, Mode=TwoWay}"
+								            Margin="8,3,0,0" HorizontalAlignment="Left" Height="20" Width="50" VerticalAlignment="Center"/>
+
+								<!-- Colour scale of the data cells: on/off, range and spectrum (persisted in the project).
+								     The Windows11 check glyph is 26 px (not scaled, Radek 2026-09-26): the check box and
+								     its label sit centred on the line, no top margin, so the row keeps its height -->
+								<q:QTextBlock Grid.Column="2" Grid.Row="0" Text="Color scale:" Margin="16,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+								<CheckBox Grid.Column="3" Grid.Row="0" IsChecked="{Binding IsHeatmapEnabled, Mode=TwoWay}"
+								          Margin="8,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
+								          MinHeight="0" MinWidth="0" Padding="0"
+								          ToolTip="Tint the data cells by value between Min and Max"/>
+
+								<q:QTextBlock Grid.Column="2" Grid.Row="1" Text="Min / Max:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
+								<StackPanel Grid.Column="3" Grid.Row="1" Orientation="Horizontal" Margin="8,3,0,0" HorizontalAlignment="Left">
+									<q:QTextBox Text="{Binding HeatMinimum, Mode=TwoWay}" Height="20" Width="60" VerticalAlignment="Center"
+									            IsEnabled="{Binding IsHeatmapEnabled}"/>
+									<q:QTextBox Text="{Binding HeatMaximum, Mode=TwoWay}" Height="20" Width="60" Margin="4,0,0,0" VerticalAlignment="Center"
+									            IsEnabled="{Binding IsHeatmapEnabled}"/>
+								</StackPanel>
+
+								<q:QTextBlock Grid.Column="2" Grid.Row="2" Text="Spectrum:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
+								<telerik:RadComboBox Grid.Column="3" Grid.Row="2" ItemsSource="{Binding Spectrums}"
+								                     SelectedItem="{Binding HeatSpectrum, Mode=TwoWay}"
+								                     Margin="8,3,0,0" HorizontalAlignment="Left" Width="124" Height="22" MinHeight="0" Padding="8,0"
+								                     VerticalAlignment="Center" IsEnabled="{Binding IsHeatmapEnabled}"/>
+							</Grid>
+						</telerik:RadExpander>
+
+						<!-- Read on request: next to the settings arrow, the arrow button's size (HeaderButtonStyle
+						     in SharedStyles, 20 px); shown only for a matrix bound to an On Request event, red
+						     after a failed read. Margin top 1 = the expander header's 1 px border above the arrow. -->
+						<telerik:RadButton Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
+						                   Style="{StaticResource HeaderButtonStyle}" Margin="3,1,0,0"
+						                   Background="{Binding IsReadError, Converter={StaticResource ErrorBackground}}"
+						                   IsEnabled="{Binding CanReadNow}"
+						                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
+						                   ToolTip="Read the matrix from the device once (On Request event; discards pending edits)"/>
+
+						<!-- Write button (same as Single-Signal): only in write mode with Write on Enter off;
+						     enabled once some cell is edited, greys back after the write, red when a cell failed -->
+						<telerik:RadButton Grid.Column="2" Content="Write" Command="{Binding WriteDirtyCommand}"
+						                   Style="{StaticResource HeaderButtonStyle}" Margin="3,1,0,0"
+						                   Background="{Binding HasWriteErrorCells, Converter={StaticResource ErrorBackground}}"
+						                   IsEnabled="{Binding CanWriteDirty}"
+						                   Visibility="{Binding IsWriteButtonVisible, Converter={StaticResource TrueToVisible}}"
+						                   ToolTip="Write all edited (highlighted) cells to the device"/>
+
+						<StackPanel Grid.Column="3" Orientation="Horizontal" Margin="5,0,0,3" VerticalAlignment="Center">
+							<q:QTextBlock Text="{Binding VariableLabel}" TextWrapping="NoWrap"/>
+							<q:QTextBlock Text=" ["/>
+							<q:QTextBlock Text="{Binding DataUnit}"/>
+							<q:QTextBlock Text="]"/>
+							<!-- Refused paste (block does not fit at the selected cell): reason with a red tint -->
+							<q:QTextBlock Text="{Binding PasteMessage}" Margin="12,0,0,0" Padding="4,0" TextWrapping="NoWrap"
+							              Background="{Binding HasPasteMessage, Converter={StaticResource ErrorBackground}}"
+							              Visibility="{Binding PasteMessage, Converter={StaticResource EmptyToCollapsed}}"/>
+						</StackPanel>
+					</Grid>
+
+					<!-- Matrix table: X axis as the first row, Y axis as the first column; axis captions from
+					     the variable layout (X above, Y rotated on the left). Virtualised RadGridView (rows and
+					     columns), one column per table column created by MatrixGridBehavior; scrollbars appear
+					     when the map is larger than the control. -->
+					<Grid Grid.Row="1" Margin="0,3,0,0">
+						<Grid.RowDefinitions>
+							<RowDefinition Height="Auto"/>
+							<RowDefinition Height="*"/>
+						</Grid.RowDefinitions>
+						<Grid.ColumnDefinitions>
+							<ColumnDefinition Width="Auto"/>
+							<ColumnDefinition Width="*"/>
+						</Grid.ColumnDefinitions>
+
+						<q:QTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding XAxisLabel}" FontStyle="Italic"
+						              HorizontalAlignment="Center" Margin="0,0,0,2"
+						              Visibility="{Binding XAxisLabel, Converter={StaticResource EmptyToCollapsed}}"/>
+
+						<q:QTextBlock Grid.Row="1" Grid.Column="0" Text="{Binding YAxisLabel}" FontStyle="Italic"
+						              VerticalAlignment="Center" Margin="0,0,2,0"
+						              Visibility="{Binding YAxisLabel, Converter={StaticResource EmptyToCollapsed}}">
+							<q:QTextBlock.LayoutTransform>
+								<RotateTransform Angle="-90"/>
+							</q:QTextBlock.LayoutTransform>
+						</q:QTextBlock>
+
+						<!-- Left / Top: the grid sizes to its columns and rows (no empty filler column right of the
+						     table); a map larger than the control still gets the scrollbars (Radek 2026-09-26) -->
+						<telerik:RadGridView Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Top"
+						                     behaviors:MatrixGridBehavior.CellTemplate="{StaticResource MatrixCellTemplate}"
+						                     behaviors:MatrixGridBehavior.CellEditTemplate="{StaticResource MatrixCellEditTemplate}"
+						                     behaviors:MatrixGridBehavior.CellStyle="{StaticResource MatrixCellStyle}"
+						                     behaviors:MatrixGridBehavior.CellWidth="{Binding CellWidth}"
+						                     behaviors:MatrixGridBehavior.ColumnCount="{Binding ColumnCount}"
+						                     behaviors:MatrixGridBehavior.IsEnabled="True"
+						                     ItemsSource="{Binding Rows}"
+						                     RowStyle="{StaticResource MatrixRowStyle}"
+						                     FrozenColumnCount="{Binding FrozenColumnCount}"
+						                     FrozenColumnsSplitterVisibility="Collapsed"
+						                     IsReadOnly="{Binding IsWriteActive, Converter={StaticResource InverseBool}}"
+						                     AutoGenerateColumns="False"
+						                     ShowColumnHeaders="False"
+						                     ShowGroupPanel="False"
+						                     RowIndicatorVisibility="Collapsed"
+						                     SelectionUnit="Cell"
+						                     SelectionMode="Extended"
+						                     ClipboardCopyMode="Cells"
+						                     ClipboardPasteMode="Cells"
+						                     GroupRenderMode="Flat"
+						                     EnableRowVirtualization="True"
+						                     EnableColumnVirtualization="True"
+						                     CanUserFreezeColumns="False"
+						                     CanUserReorderColumns="False"
+						                     CanUserResizeColumns="False"
+						                     CanUserSortColumns="False"
+						                     CanUserDeleteRows="False"
+						                     CanUserInsertRows="False"
+						                     IsFilteringAllowed="False"
+						                     ValidatesOnDataErrors="None"
+						                     RowHeight="20"
+						                     GridLinesVisibility="Both"
+						                     Background="Transparent"
+						                     BorderThickness="0"/>
+					</Grid>
+				</Grid>
+			</DataTemplate>
 		</ResourceDictionary>
 	</UserControl.Resources>
 
 	<telerik:RadContextMenu.ContextMenu>
 		<telerik:RadContextMenu>
 			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
-			<telerik:RadMenuItem Header="Write Mode" IsCheckable="True" IsChecked="{Binding IsWriteMode, Mode=TwoWay}"
-			                     IsEnabled="{Binding CanWrite}"/>
+			<!-- Write Mode belongs to the shown tab (each map has its own edit state) -->
+			<telerik:RadMenuItem Header="Write Mode" IsCheckable="True" IsChecked="{Binding SelectedPage.IsWriteMode, Mode=TwoWay}"
+			                     IsEnabled="{Binding SelectedPage.CanWrite, FallbackValue=False}"/>
 			<!-- Same option as in the Single-Signal and Watch Table controls: Enter writes immediately;
 			     unticked, the edit stays pending and the Write button in the header sends it -->
 			<telerik:RadMenuItem Header="Write on Enter" IsCheckable="True" IsChecked="{Binding WriteOnEnter, Mode=TwoWay}"
-			                     IsEnabled="{Binding IsWriteActive}"/>
-			<!-- Read on request is the button in the header only (same as Single-Signal/WatchTable);
-			     "Auto Read" removed: the table always follows the device (poll / Read) -->
+			                     IsEnabled="{Binding SelectedPage.IsWriteActive, FallbackValue=False}"/>
 		</telerik:RadContextMenu>
 	</telerik:RadContextMenu.ContextMenu>
 
 	<Grid>
-		<Grid.RowDefinitions>
-			<RowDefinition Height="Auto"/>
-			<RowDefinition Height="*"/>
-		</Grid.RowDefinitions>
-
-		<!-- Header: settings expander | Read | Write | variable label (same order as Single-Signal) -->
-		<Grid Grid.Row="0">
-			<Grid.ColumnDefinitions>
-				<ColumnDefinition Width="Auto"/>
-				<ColumnDefinition Width="Auto"/>
-				<ColumnDefinition Width="Auto"/>
-				<ColumnDefinition Width="*"/>
-			</Grid.ColumnDefinitions>
-
-			<!-- Settings in two column pairs (3 rows) so they fit a low control such as a curve
-			     (the expander content is clipped by the control height, Radek 2026-09-26) -->
-			<telerik:RadExpander Grid.Column="0" Style="{StaticResource SquareExpanderStyle}" HorizontalAlignment="Left">
-				<Grid Margin="5">
-					<Grid.ColumnDefinitions>
-						<ColumnDefinition Width="Auto"/>
-						<ColumnDefinition Width="Auto"/>
-						<ColumnDefinition Width="Auto"/>
-						<ColumnDefinition Width="Auto"/>
-					</Grid.ColumnDefinitions>
-					<Grid.RowDefinitions>
-						<RowDefinition Height="Auto"/>
-						<RowDefinition Height="Auto"/>
-						<RowDefinition Height="Auto"/>
-					</Grid.RowDefinitions>
-
-					<q:QTextBlock Grid.Column="0" Grid.Row="0" Text="Refresh [ms]:" Margin="0,3,0,0" HorizontalAlignment="Left"/>
-					<q:QTextBox Grid.Column="1" Grid.Row="0" Text="{Binding RefreshTime, Mode=TwoWay}"
-					            Margin="8,3,0,0" HorizontalAlignment="Left" Height="20" Width="50" VerticalAlignment="Center"/>
-
-					<q:QTextBlock Grid.Column="0" Grid.Row="1" Text="Cell width [px]:" Margin="0,3,0,0" HorizontalAlignment="Left"/>
-					<q:QTextBox Grid.Column="1" Grid.Row="1" Text="{Binding CellWidth, Mode=TwoWay}"
-					            Margin="8,3,0,0" HorizontalAlignment="Left" Height="20" Width="50" VerticalAlignment="Center"/>
-
-					<!-- Colour scale of the data cells: on/off, range and spectrum (persisted in the project).
-					     CheckBox without the theme padding / min height (GraphControl pattern) so its box sits
-					     on the text box line, not below and to the right of it. -->
-					<!-- The Windows11 check glyph is 26 px (not scaled, Radek 2026-09-26): the check box and
-					     its label sit centred on the line, no top margin, so the row keeps its height -->
-					<q:QTextBlock Grid.Column="2" Grid.Row="0" Text="Color scale:" Margin="16,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"/>
-					<CheckBox Grid.Column="3" Grid.Row="0" IsChecked="{Binding IsHeatmapEnabled, Mode=TwoWay}"
-					          Margin="8,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
-					          MinHeight="0" MinWidth="0" Padding="0"
-					          ToolTip="Tint the data cells by value between Min and Max"/>
-
-					<q:QTextBlock Grid.Column="2" Grid.Row="1" Text="Min / Max:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
-					<StackPanel Grid.Column="3" Grid.Row="1" Orientation="Horizontal" Margin="8,3,0,0" HorizontalAlignment="Left">
-						<q:QTextBox Text="{Binding HeatMinimum, Mode=TwoWay}" Height="20" Width="60" VerticalAlignment="Center"
-						            IsEnabled="{Binding IsHeatmapEnabled}"/>
-						<q:QTextBox Text="{Binding HeatMaximum, Mode=TwoWay}" Height="20" Width="60" Margin="4,0,0,0" VerticalAlignment="Center"
-						            IsEnabled="{Binding IsHeatmapEnabled}"/>
-					</StackPanel>
-
-					<q:QTextBlock Grid.Column="2" Grid.Row="2" Text="Spectrum:" Margin="16,3,0,0" HorizontalAlignment="Left"/>
-					<telerik:RadComboBox Grid.Column="3" Grid.Row="2" ItemsSource="{Binding Spectrums}"
-					                     SelectedItem="{Binding HeatSpectrum, Mode=TwoWay}"
-					                     Margin="8,3,0,0" HorizontalAlignment="Left" Width="124" Height="22" MinHeight="0" Padding="8,0"
-					                     VerticalAlignment="Center" IsEnabled="{Binding IsHeatmapEnabled}"/>
-				</Grid>
-			</telerik:RadExpander>
-
-			<!-- Read on request: next to the settings arrow, the arrow button's size (HeaderButtonStyle
-			     in SharedStyles, 20 px); shown only for a matrix bound to an On Request event, red
-			     after a failed read. Margin top 1 = the expander header's 1 px border above the arrow. -->
-			<telerik:RadButton Grid.Column="1" Content="Read" Command="{Binding ReadCommand}"
-			                   Style="{StaticResource HeaderButtonStyle}" Margin="3,1,0,0"
-			                   Background="{Binding IsReadError, Converter={StaticResource ErrorBackground}}"
-			                   IsEnabled="{Binding CanReadNow}"
-			                   Visibility="{Binding CanRead, Converter={StaticResource TrueToVisible}}"
-			                   ToolTip="Read the matrix from the device once (On Request event; discards pending edits)"/>
-
-			<!-- Write button (same as Single-Signal): only in write mode with Write on Enter off;
-			     enabled once some cell is edited, greys back after the write, red when a cell failed -->
-			<telerik:RadButton Grid.Column="2" Content="Write" Command="{Binding WriteDirtyCommand}"
-			                   Style="{StaticResource HeaderButtonStyle}" Margin="3,1,0,0"
-			                   Background="{Binding HasWriteErrorCells, Converter={StaticResource ErrorBackground}}"
-			                   IsEnabled="{Binding CanWriteDirty}"
-			                   Visibility="{Binding IsWriteButtonVisible, Converter={StaticResource TrueToVisible}}"
-			                   ToolTip="Write all edited (highlighted) cells to the device"/>
-
-			<StackPanel Grid.Column="3" Orientation="Horizontal" Margin="5,0,0,3" VerticalAlignment="Center">
-				<q:QTextBlock Text="{Binding VariableLabel}" TextWrapping="NoWrap"/>
-				<q:QTextBlock Text=" ["/>
-				<q:QTextBlock Text="{Binding DataUnit}"/>
-				<q:QTextBlock Text="]"/>
-				<!-- Refused paste (block does not fit at the selected cell): reason with a red tint -->
-				<q:QTextBlock Text="{Binding PasteMessage}" Margin="12,0,0,0" Padding="4,0" TextWrapping="NoWrap"
-				              Background="{Binding HasPasteMessage, Converter={StaticResource ErrorBackground}}"
-				              Visibility="{Binding PasteMessage, Converter={StaticResource EmptyToCollapsed}}"/>
-			</StackPanel>
-		</Grid>
-
-		<!-- Matrix table: X axis as the first row, Y axis as the first column; axis captions from
-		     the variable layout (X above, Y rotated on the left). Virtualised RadGridView (rows and
-		     columns), one column per table column created by MatrixGridBehavior; scrollbars appear
-		     when the map is larger than the control. -->
-		<Grid Grid.Row="1" Margin="0,3,0,0">
-			<Grid.RowDefinitions>
-				<RowDefinition Height="Auto"/>
-				<RowDefinition Height="*"/>
-			</Grid.RowDefinitions>
-			<Grid.ColumnDefinitions>
-				<ColumnDefinition Width="Auto"/>
-				<ColumnDefinition Width="*"/>
-			</Grid.ColumnDefinitions>
-
-			<q:QTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding XAxisLabel}" FontStyle="Italic"
-			              HorizontalAlignment="Center" Margin="0,0,0,2"
-			              Visibility="{Binding XAxisLabel, Converter={StaticResource EmptyToCollapsed}}"/>
-
-			<q:QTextBlock Grid.Row="1" Grid.Column="0" Text="{Binding YAxisLabel}" FontStyle="Italic"
-			              VerticalAlignment="Center" Margin="0,0,2,0"
-			              Visibility="{Binding YAxisLabel, Converter={StaticResource EmptyToCollapsed}}">
-				<q:QTextBlock.LayoutTransform>
-					<RotateTransform Angle="-90"/>
-				</q:QTextBlock.LayoutTransform>
-			</q:QTextBlock>
-
-			<!-- Left / Top: the grid sizes to its columns and rows (no empty filler column right of the
-			     table); a map larger than the control still gets the scrollbars (Radek 2026-09-26) -->
-			<telerik:RadGridView Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Top"
-			                     behaviors:MatrixGridBehavior.CellTemplate="{StaticResource MatrixCellTemplate}"
-			                     behaviors:MatrixGridBehavior.CellEditTemplate="{StaticResource MatrixCellEditTemplate}"
-			                     behaviors:MatrixGridBehavior.CellStyle="{StaticResource MatrixCellStyle}"
-			                     behaviors:MatrixGridBehavior.CellWidth="{Binding CellWidth}"
-			                     behaviors:MatrixGridBehavior.ColumnCount="{Binding ColumnCount}"
-			                     behaviors:MatrixGridBehavior.IsEnabled="True"
-			                     ItemsSource="{Binding Rows}"
-			                     RowStyle="{StaticResource MatrixRowStyle}"
-			                     FrozenColumnCount="{Binding FrozenColumnCount}"
-			                     FrozenColumnsSplitterVisibility="Collapsed"
-			                     IsReadOnly="{Binding IsWriteActive, Converter={StaticResource InverseBool}}"
-			                     AutoGenerateColumns="False"
-			                     ShowColumnHeaders="False"
-			                     ShowGroupPanel="False"
-			                     RowIndicatorVisibility="Collapsed"
-			                     SelectionUnit="Cell"
-			                     SelectionMode="Extended"
-			                     ClipboardCopyMode="Cells"
-			                     ClipboardPasteMode="Cells"
-			                     GroupRenderMode="Flat"
-			                     EnableRowVirtualization="True"
-			                     EnableColumnVirtualization="True"
-			                     CanUserFreezeColumns="False"
-			                     CanUserReorderColumns="False"
-			                     CanUserResizeColumns="False"
-			                     CanUserSortColumns="False"
-			                     CanUserDeleteRows="False"
-			                     CanUserInsertRows="False"
-			                     IsFilteringAllowed="False"
-			                     ValidatesOnDataErrors="None"
-			                     RowHeight="20"
-			                     GridLinesVisibility="Both"
-			                     Background="Transparent"
-			                     BorderThickness="0"/>
-		</Grid>
+		<!-- One tab per matrix variable (Calibro ParamControl pattern, Radek 2026-09-27). Content is
+		     kept per tab so a visited map's grid is built once. -->
+		<telerik:RadTabControl ItemsSource="{Binding Pages}"
+		                       SelectedItem="{Binding SelectedPage, Mode=TwoWay}"
+		                       ItemTemplate="{StaticResource MatrixTabHeaderTemplate}"
+		                       ContentTemplate="{StaticResource MatrixPageTemplate}"
+		                       ItemContainerStyle="{StaticResource MatrixTabItemStyle}"
+		                       IsContentPreserved="True"
+		                       Background="Transparent"
+		                       BorderThickness="0"
+		                       Padding="0"
+		                       Visibility="{Binding HasPages, Converter={StaticResource TrueToVisible}}"/>
+		<q:QTextBlock Text="Drop a matrix variable (map, curve, value block) here"
+		              HorizontalAlignment="Center" VerticalAlignment="Center" FontStyle="Italic"
+		              Visibility="{Binding HasPages, Converter={StaticResource TrueToCollapsed}}"/>
 	</Grid>
 </UserControl>

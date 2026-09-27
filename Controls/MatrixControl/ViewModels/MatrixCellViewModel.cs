@@ -16,10 +16,10 @@ namespace Qenex.QSuite.Controls.MatrixControl.ViewModels;
 /// </summary>
 public class MatrixCellViewModel : INotifyPropertyChanged
 {
-    private readonly MatrixControlViewModel owner;
+    private readonly MatrixPageViewModel owner;
     private bool suppressDirty;
 
-    public MatrixCellViewModel(MatrixControlViewModel owner, MatrixSectionKind kind, int index, int row, int column,
+    public MatrixCellViewModel(MatrixPageViewModel owner, MatrixSectionKind kind, int index, int row, int column,
         bool isPlaceholder = false)
     {
         this.owner = owner;
@@ -30,7 +30,7 @@ public class MatrixCellViewModel : INotifyPropertyChanged
         IsPlaceholder = isPlaceholder;
     }
 
-    public static MatrixCellViewModel Placeholder(MatrixControlViewModel owner, int row, int column)
+    public static MatrixCellViewModel Placeholder(MatrixPageViewModel owner, int row, int column)
     {
         return new MatrixCellViewModel(owner, MatrixSectionKind.Data, -1, row, column, isPlaceholder: true);
     }
