@@ -42,12 +42,24 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 			field = value;
 			OnPropertyChanged();
 			RemoveSelectedCommand.OnCanExecuteChanged();
+			MoveSelectedUpCommand.OnCanExecuteChanged();
+			MoveSelectedDownCommand.OnCanExecuteChanged();
 		}
 	}
 
 	[IgnoreDataMember]
 	public RelayCommand<object> RemoveSelectedCommand =>
 		field ??= new RelayCommand<object>(_ => RemoveSelected(), _ => SelectedRow != null);
+
+	/// <summary>Context menu "Move up" / "Move down": row order in the table and in the persisted
+	/// variable references (the rows are rebuilt from LinkedVariables on load) (Radek 2026-09-27).</summary>
+	[IgnoreDataMember]
+	public RelayCommand<object> MoveSelectedUpCommand =>
+		field ??= new RelayCommand<object>(_ => MoveSelected(-1), _ => SelectedRow != null && Rows.IndexOf(SelectedRow) > 0);
+
+	[IgnoreDataMember]
+	public RelayCommand<object> MoveSelectedDownCommand =>
+		field ??= new RelayCommand<object>(_ => MoveSelected(+1), _ => SelectedRow != null && Rows.IndexOf(SelectedRow) < Rows.Count - 1);
 
 	// Column visibility flags bound by the context menu and (via BindingProxy) by the grid
 	// columns. Runtime state only - persisted through ColumnLayout, which the layout behavior
@@ -486,6 +498,27 @@ public class WatchTableControlViewModel : ControlBase, IVariableWriteControl, IV
 			row.IsDirty = false;
 			row.IsWriteError = false;
 		}
+	}
+
+	private void MoveSelected(int delta)
+	{
+		var row = SelectedRow;
+		if (row == null) return;
+
+		var index = Rows.IndexOf(row);
+		var target = index + delta;
+		if (index < 0 || target < 0 || target >= Rows.Count) return;
+
+		Rows.Move(index, target);
+		var referenceIndex = LinkedVariables.IndexOf(row.Reference);
+		var referenceTarget = referenceIndex + delta;
+		if (referenceIndex >= 0 && referenceTarget >= 0 && referenceTarget < LinkedVariables.Count)
+		{
+			LinkedVariables.RemoveAt(referenceIndex);
+			LinkedVariables.Insert(referenceTarget, row.Reference);
+		}
+
+		SelectedRow = row;
 	}
 
 	private void RemoveSelected()
