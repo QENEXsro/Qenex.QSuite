@@ -8,16 +8,22 @@ namespace Qenex.QInsight.ViewModels.ModelWrappers;
 public class ProjectConfigurationEventWrapper : PropertyChangedBase
 {
     private readonly List<EditablePropertyWrapper> editableProperties = [];
-    private readonly IReadOnlyList<string> eventTypeOptions = EventsGlobal.VariableEventTypeDict.Keys
-        .Where(type => type != EventsGlobal.VariableEventType.Undefined)
-        .Select(type => type.ToString())
-        .ToList();
+    private readonly IReadOnlyList<string> eventTypeOptions;
 
     private EventState originalState;
     private EventState currentState;
 
     public ProjectConfigurationEventWrapper(IVarEvent variableEvent, bool isNew = false)
     {
+        // "On Value Changed" is not offered: no protocol or driver handles it (checked 2026-09-27,
+        // Radek). An event of that type coming from an older project file keeps it in its list so
+        // the project still loads and shows as saved.
+        eventTypeOptions = EventsGlobal.VariableEventTypeDict.Keys
+            .Where(type => type != EventsGlobal.VariableEventType.Undefined)
+            .Where(type => type != EventsGlobal.VariableEventType.OnValueChanged || variableEvent is OnValueChangedVarEvent)
+            .Select(type => type.ToString())
+            .ToList();
+
         VariableEvent = variableEvent;
         IsNew = isNew;
         originalState = EventState.FromEvent(variableEvent);
