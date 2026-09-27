@@ -271,15 +271,20 @@
 	<Grid>
 		<!-- One tab per matrix variable (Calibro ParamControl pattern, Radek 2026-09-27). Content is
 		     kept per tab so a visited map's grid is built once. -->
+		<!-- Tabs of the maps. No background on the tab control / its header and the strip fitted to
+		     the tabs (MatrixTabsBehavior): the empty part of the strip belongs to the control, so the
+		     shape is dragged there and the control's context menu opens there (Radek 2026-09-27). -->
 		<telerik:RadTabControl ItemsSource="{Binding Pages}"
 		                       SelectedItem="{Binding SelectedPage, Mode=TwoWay}"
 		                       ItemTemplate="{StaticResource MatrixTabHeaderTemplate}"
 		                       ContentTemplate="{StaticResource MatrixPageTemplate}"
 		                       ItemContainerStyle="{StaticResource MatrixTabItemStyle}"
 		                       IsContentPreserved="True"
-		                       Background="Transparent"
+		                       Background="{x:Null}"
+		                       HeaderBackground="{x:Null}"
 		                       BorderThickness="0"
 		                       Padding="0"
+		                       behaviors:MatrixTabsBehavior.StripFitsTabs="True"
 		                       Visibility="{Binding HasPages, Converter={StaticResource TrueToVisible}}"/>
 		<q:QTextBlock Text="Drop a matrix variable (map, curve, value block) here"
 		              HorizontalAlignment="Center" VerticalAlignment="Center" FontStyle="Italic"
