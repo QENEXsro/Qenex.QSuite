@@ -31,6 +31,8 @@
 	<telerik:RadContextMenu.ContextMenu>
 		<telerik:RadContextMenu>
 			<telerik:RadMenuItem Header="Lock" IsCheckable="True" IsChecked="{Binding IsLocked, Mode=TwoWay}"/>
+			<telerik:RadMenuItem Header="Move up" Command="{Binding MoveSelectedUpCommand}"/>
+			<telerik:RadMenuItem Header="Move down" Command="{Binding MoveSelectedDownCommand}"/>
 			<telerik:RadMenuItem Header="Remove" Command="{Binding RemoveSelectedCommand}"/>
 			<!-- Same option as in the Matrix and Single-Signal controls: Enter writes immediately;
 			     unticked, the edit stays pending and the row's Write button sends it -->
