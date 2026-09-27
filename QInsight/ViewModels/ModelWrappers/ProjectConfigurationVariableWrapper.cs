@@ -60,6 +60,29 @@ public class ProjectConfigurationVariableWrapper : PropertyChangedBase
         NotifyStateChanged();
     }
 
+    /// <summary>
+    /// Checks on a probe that the current state can be applied (matrix layout and section
+    /// presentations), so a problem is reported before anything is applied instead of throwing
+    /// from <see cref="ApplyChanges"/>. Returns the problem text, or null when the state is valid.
+    /// </summary>
+    public string? ValidateBeforeApply()
+    {
+        if (Variable is not MatrixVariable || currentState.MatrixState == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            ApplyMatrixState(new MatrixVariable(), currentState.MatrixState);
+            return null;
+        }
+        catch (ArgumentException e)
+        {
+            return e.Message;
+        }
+    }
+
     public void CancelChanges()
     {
         currentState = originalState;
@@ -317,7 +340,8 @@ public class ProjectConfigurationVariableWrapper : PropertyChangedBase
 
     /// <summary>
     /// Zapise stav konfigurace do MatrixVariable: parsuje Layout string, resolvuje prezentace
-    /// per sekce a validuje vysledny layout vc. Modbus limitu 246 B (123 registru, FC16).
+    /// per sekce a validuje vysledny layout. Limit velikosti matice patri protokolu (Modbus
+    /// 246/250 B, XCP 16 KB dat) a hlida ho jeho specifikace promenne, ne editor.
     /// Vola se i nad sondou (probe) pri kazde editaci — vyhazuje ArgumentException s popisem.
     /// </summary>
     private void ApplyMatrixState(MatrixVariable matrixVariable, MatrixVariableState state)
@@ -335,17 +359,7 @@ public class ProjectConfigurationVariableWrapper : PropertyChangedBase
         {
             throw new ArgumentException(layoutError);
         }
-
-        if (matrixVariable.Size > MaxMatrixBytes)
-        {
-            throw new ArgumentException(
-                $"Matrix size {matrixVariable.Size} B exceeds the {MaxMatrixBytes} B limit " +
-                "(123 registers per Modbus write request).");
-        }
     }
-
-    // Modbus FC16 zapisuje max 123 registru = 246 B; cela matice se prenasi jednim requestem.
-    private const int MaxMatrixBytes = 246;
 
     private MatrixSection? CreateMatrixSection(MatrixSectionParts? parts)
     {
