@@ -204,12 +204,18 @@
 							<ColumnDefinition Width="*"/>
 						</Grid.ColumnDefinitions>
 
+						<!-- Axis captions take the size of the table, not of the free space: the table column
+						     and row are star-sized (scrollbars for large maps) while the table itself sits
+						     top-left, so a caption centred in the cell drifted off a narrow or short table. -->
 						<q:QTextBlock Grid.Row="0" Grid.Column="1" Text="{Binding XAxisLabel}" FontStyle="Italic"
-						              HorizontalAlignment="Center" Margin="0,0,0,2"
+						              HorizontalAlignment="Left" TextAlignment="Center" Margin="0,0,0,2"
+						              Width="{Binding ActualWidth, ElementName=MatrixGrid}"
 						              Visibility="{Binding XAxisLabel, Converter={StaticResource EmptyToCollapsed}}"/>
 
+						<!-- Rotated by -90°: its Width is the vertical extent, bound to the table height. -->
 						<q:QTextBlock Grid.Row="1" Grid.Column="0" Text="{Binding YAxisLabel}" FontStyle="Italic"
-						              VerticalAlignment="Center" Margin="0,0,2,0"
+						              VerticalAlignment="Top" TextAlignment="Center" Margin="0,0,2,0"
+						              Width="{Binding ActualHeight, ElementName=MatrixGrid}"
 						              Visibility="{Binding YAxisLabel, Converter={StaticResource EmptyToCollapsed}}">
 							<q:QTextBlock.LayoutTransform>
 								<RotateTransform Angle="-90"/>
@@ -218,7 +224,7 @@
 
 						<!-- Left / Top: the grid sizes to its columns and rows (no empty filler column right of the
 						     table); a map larger than the control still gets the scrollbars (Radek 2026-09-26) -->
-						<telerik:RadGridView Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Top"
+						<telerik:RadGridView x:Name="MatrixGrid" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Top"
 						                     behaviors:MatrixGridBehavior.CellTemplate="{StaticResource MatrixCellTemplate}"
 						                     behaviors:MatrixGridBehavior.CellEditTemplate="{StaticResource MatrixCellEditTemplate}"
 						                     behaviors:MatrixGridBehavior.CellStyle="{StaticResource MatrixCellStyle}"
