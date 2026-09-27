@@ -63,7 +63,7 @@ public class MatrixKeyboardCommandProvider : DefaultKeyboardCommandProvider
     /// goes to the view model with the selected rectangle - fit check and dirty cells happen there.</summary>
     public static void PasteFromClipboard(RadGridView grid)
     {
-        if (grid.DataContext is not MatrixControlViewModel viewModel || !Clipboard.ContainsText() ||
+        if (grid.DataContext is not MatrixPageViewModel viewModel || !Clipboard.ContainsText() ||
             !TrySelectionRectangle(grid, out var top, out var left, out var bottom, out var right))
         {
             return;
