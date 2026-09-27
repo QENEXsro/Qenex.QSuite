@@ -32,22 +32,22 @@
 			     so the templates reach it through the GridViewCell.Value of their cell. Display =
 			     TextBlock inside the Telerik cell (text colour from the theme, as in WatchTable);
 			     a text box exists only for the one cell being edited (CellEditTemplate). -->
-			<!-- The X axis row draws the separator towards the data itself (1 px line at the cell
-			     bottom): cell / row borders from the styles are not rendered by the host, content is
+			<!-- The X axis row draws the separator towards the data itself (2 px line at the cell
+			     bottom, distinguishable from the grid lines): cell / row borders from the styles are not rendered by the host, content is
 			     (2026-09-26). Colour = the control's ForegroundColor, i.e. the theme text colour from
 			     the application settings the host hands to every control - the same colour the Graph
-			     control frames its plot with (Radek 2026-09-27). The Y axis is a frozen column (stays
+			     control frames its plot with, 2 px so it stands out from the grid lines (Radek 2026-09-27). The Y axis is a frozen column (stays
 			     visible while scrolling); its separator is drawn the same way, the theme splitter is hidden. -->
 			<DataTemplate x:Key="MatrixCellTemplate">
 				<Grid>
 					<TextBlock Text="{Binding Value.DisplayText, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}}"
 					           TextAlignment="Right" VerticalAlignment="Center" Margin="3,0,3,2"/>
-					<Rectangle Height="1" VerticalAlignment="Bottom" Margin="-4,0,-4,-2"
+					<Rectangle Height="2" VerticalAlignment="Bottom" Margin="-4,0,-4,-2"
 					           Fill="{Binding DataContext.ForegroundColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrush}}"
 					           Visibility="{Binding Value.IsXAxisRow, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}, Converter={StaticResource TrueToVisible}}"/>
 					<!-- Same line at the right edge of the Y axis column (the theme's blue frozen-column
 					     splitter is hidden; the column stays frozen) -->
-					<Rectangle Width="1" HorizontalAlignment="Right" Margin="0,-2,-3,-2"
+					<Rectangle Width="2" HorizontalAlignment="Right" Margin="0,-2,-3,-2"
 					           Fill="{Binding DataContext.ForegroundColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrush}}"
 					           Visibility="{Binding Value.IsYAxisColumn, RelativeSource={RelativeSource AncestorType=telerik:GridViewCell}, Converter={StaticResource TrueToVisible}}"/>
 				</Grid>
