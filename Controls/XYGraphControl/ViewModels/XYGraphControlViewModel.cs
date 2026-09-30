@@ -771,6 +771,9 @@ public class XYGraphControlViewModel : ControlBase, IFileDialogAwareControl, IVa
         PlotControl.UserInputProcessor.UserActionResponses.RemoveAll(
             x => x is ScottPlot.Interactivity.UserActionResponses.SingleClickContextMenu);
 
+        // The plot zooms with the wheel but leaves the event unhandled; keep it from also scrolling the workspace
+        PlotControl.MouseWheel += (_, e) => e.Handled = true;
+
         // Vychozi leva osa musi v plotu zustat (ScottPlot vyzaduje existenci Axes.Left -
         // render/GetCoordinates by spadly, kdyby uzivatel presunul vsechny osy doprava).
         // Zustava viditelna jako holy ramecek grafu: EmptyTickGenerator zaruci, ze nikdy
